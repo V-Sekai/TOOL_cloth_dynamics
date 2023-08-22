@@ -104,6 +104,8 @@ file(GLOB SRCFILES "src/code/main.cpp" "src/code/*.h" "src/code/*.c" "src/code/e
 source_group("Sources" FILES ${SRCFILES})
 add_executable(${EXECUTABLE_NAME} ${SRCFILES}  )
 
+file(COPY ${CMAKE_SOURCE_DIR}/src/assets DESTINATION ${CMAKE_BINARY_DIR}/src/assets)
+
 target_link_directories(${PROJECT_NAME} PRIVATE "/usr/local/Cellar/libomp/16.0.6/lib/")
 target_link_libraries(${EXECUTABLE_NAME} OpenMP::OpenMP_CXX)
 target_include_directories(${EXECUTABLE_NAME} PRIVATE ${EXTERNAL_HEADER})
