@@ -53,18 +53,18 @@ static std::string getEnvVar(const std::string &name) {
 		return "";
 	}
 }
+
 int main(int argc, char *argv[]) {
-	int n_threads = 1;
-	std::string NUM_THREADS_ENV_VAR = getEnvVar("OMP_NUM_THREADS");
-	if (NUM_THREADS_ENV_VAR.empty()) {
-		Logging::logWarning(
-				"You must specify OMP_NUM_THREADS in your environment variable");
-		return 0;
-	} else {
-		n_threads = std::stoi(NUM_THREADS_ENV_VAR);
-		Logging::logColor("OMP_NUM_THREADS=" + int2str(n_threads) + "\n",
-				Logging::GREEN);
-	}
+    int n_threads = std::thread::hardware_concurrency();
+    std::string NUM_THREADS_ENV_VAR = getEnvVar("OMP_NUM_THREADS");
+    if (NUM_THREADS_ENV_VAR.empty()) {
+        Logging::logWarning(
+                "OMP_NUM_THREADS not specified in your environment variable. Defaulting to number of physical cores: " + std::to_string(n_threads));
+    } else {
+        n_threads = std::stoi(NUM_THREADS_ENV_VAR);
+        Logging::logColor("OMP_NUM_THREADS=" + std::to_string(n_threads) + "\n",
+                Logging::GREEN);
+    }
 	bool parallelizeEigen = true;
 	if (OPENMP_ENABLED) {
 		Eigen::initParallel();
