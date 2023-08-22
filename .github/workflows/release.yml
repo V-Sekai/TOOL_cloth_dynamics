@@ -68,6 +68,11 @@ jobs:
         run: |
           cp /usr/local/opt/libomp/lib/libomp.dylib build/
 
+      - name: Copy src
+        run: |
+          rm -rf src/code
+          cp -r src build/
+
       - name: Zip Binary and Assets
         working-directory: build
         shell: bash

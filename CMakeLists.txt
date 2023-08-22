@@ -37,7 +37,7 @@ set(EXECUTABLE_NAME DiffCloth)
 set(EXTERNAL_ROOT ${PROJECT_SOURCE_DIR}/external)
 set(LIB dependencies/lib)
 
-add_definitions(-DSOURCE_PATH=".")
+add_definitions(-DSOURCE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}\")
 
 add_definitions(-DCMAKE_TOOLCHAIN_FILE=${PROJECT_SOURCE_DIR}/external/vcpkg/scripts/buildsystems/vcpkg.cmake)
 
@@ -103,8 +103,6 @@ file(GLOB HEADERS "src/code/*.h" "src/code/engine/*.h" "src/code/simulation/*.h"
 file(GLOB SRCFILES "src/code/main.cpp" "src/code/*.h" "src/code/*.c" "src/code/engine/*.cpp" "src/code/engine/*.h" "src/code/simulation/*.cpp" "src/code/simulation/*.h" "src/code/supports/*.cpp" "src/code/supports/*.h" "src/code/optimization/*.cpp" "src/code/optimization/*.h")
 source_group("Sources" FILES ${SRCFILES})
 add_executable(${EXECUTABLE_NAME} ${SRCFILES}  )
-
-file(COPY ${CMAKE_SOURCE_DIR}/src/assets DESTINATION ${CMAKE_BINARY_DIR}/src/assets)
 
 target_link_directories(${PROJECT_NAME} PRIVATE "/usr/local/Cellar/libomp/16.0.6/lib/")
 target_link_libraries(${EXECUTABLE_NAME} OpenMP::OpenMP_CXX)
