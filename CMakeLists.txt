@@ -37,7 +37,7 @@ set(EXECUTABLE_NAME DiffCloth)
 set(EXTERNAL_ROOT ${PROJECT_SOURCE_DIR}/external)
 set(LIB dependencies/lib)
 
-add_definitions(-DSOURCE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}\")
+add_definitions(-DSOURCE_PATH=".")
 
 add_definitions(-DCMAKE_TOOLCHAIN_FILE=${PROJECT_SOURCE_DIR}/external/vcpkg/scripts/buildsystems/vcpkg.cmake)
 
