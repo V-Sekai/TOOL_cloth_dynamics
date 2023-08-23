@@ -68,19 +68,13 @@ jobs:
         run: |
           cp /usr/local/opt/libomp/lib/libomp.dylib build/
 
-      - name: Copy src
-        run: |
-          rm -rf src/code
-          cp -r src build/
-
       - name: Zip Binary and Assets
-        working-directory: build
         shell: bash
         run: |
           if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            zip -r ${{ matrix.asset_name }} libomp.dylib DiffCloth* src/assets ../README.md ../LICENSE
+            zip -r ${{ matrix.asset_name }} build/libomp.dylib build/DiffCloth* src/assets README.md LICENSE
           else
-            zip -r ${{ matrix.asset_name }} DiffCloth* src/assets ../README.md ../LICENSE
+            zip -r ${{ matrix.asset_name }} build/DiffCloth* src/assets README.md LICENSE
           fi
 
       - name: Upload Artifact
