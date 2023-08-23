@@ -16,7 +16,6 @@ void BackwardTaskSolver::solveDemo(
 	helper.taskInfo.optimizer = Optimizer::LBFGS;
 	optimizeLBFGS(system, helper, system->sceneConfig.stepNum, demoNum, isRandom,
 			srandSeed, setTextBoxCB);
-	helper.saveLastIter();
 }
 
 void BackwardTaskSolver::optimizeLBFGS(
