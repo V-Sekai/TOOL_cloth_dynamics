@@ -87,24 +87,19 @@ int main(int argc, char *argv[]) {
 		BACKWARD_TASK, /* 1 */
 		BACKWARD_TASK_DEMO, /* 2 */
 	};
-
-	std::vector<std::string> validModes = { "optimize", "visualize" };
 	std::vector<std::string> validDemos = { "tshirt", "sock", "hat", "sphere",
 		"dress" };
-	char *modeStr = getCmdOption(argv, argv + argc, "-mode");
 	char *demoNameStr = getCmdOption(argv, argv + argc, "-demo");
 	char *randSeedStr = getCmdOption(argv, argv + argc, "-seed");
 	char *expStr = getCmdOption(argv, argv + argc, "-exp");
-	checkCmdOptionExistsAndValid("-mode", modeStr, validModes);
 	checkCmdOptionExistsAndValid("-demo", demoNameStr, validDemos);
 
 	if (argc == 1) {
 		Logging::logFatal(
-				"WARNING: No command line argument.\n Please specify -mode [optimize] "
+				"WARNING: No command line argument.\n Please specify "
 				"-demo [tshirt, sock, hat] -seed [number]\n");
 		Logging::logFatal("Exiting program...\n");
 	} else {
-		std::string mode = std::string(modeStr);
 		std::string demoName = std::string(demoNameStr);
 		Demos demo;
 		if (demoName == "tshirt") {
@@ -118,10 +113,8 @@ int main(int argc, char *argv[]) {
 		} else if (demoName == "dress") {
 			demo = Demos::DEMO_DRESS_TWIRL;
 		}
-		if (mode == "optimize") {
-			checkCmdOptionExistsAndValid("-seed", randSeedStr, {});
-			runBackwardTask(demo, true, std::atoi(randSeedStr));
-		}
+		checkCmdOptionExistsAndValid("-seed", randSeedStr, {});
+		runBackwardTask(demo, true, std::atoi(randSeedStr));
 		std::printf("Exiting program...\n");
 	}
 
