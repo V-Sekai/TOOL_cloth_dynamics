@@ -90,13 +90,13 @@ static Rotation axisToRotation(Vec3d finalDir, Vec3d initialDir) {
 static std::vector<std::string>
 listFiles(std::string path, std::string extension) // extension = ".txt"
 {
-    std::vector<std::string> filePaths;
-    for (const auto &entry : std::filesystem::directory_iterator(path)) {
-        if (entry.path().extension() == extension) {
-            filePaths.push_back(entry.path().string());
-        }
-    }
-    return filePaths;
+	std::vector<std::string> filePaths;
+	for (const auto &entry : std::filesystem::directory_iterator(path)) {
+		if (entry.path().extension() == extension) {
+			filePaths.push_back(entry.path().string());
+		}
+	}
+	return filePaths;
 }
 
 static std::vector<std::string> listDirectory(std::string path) {

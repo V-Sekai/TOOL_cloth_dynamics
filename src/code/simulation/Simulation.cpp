@@ -1243,7 +1243,7 @@ void Simulation::step() {
 							(sceneConfig.timeStep * sceneConfig.timeStep) +
 					M_times_sn;
 			timeSteptimer.toc();
-			
+
 			double deltav_prim_changes = 0;
 			std::pair<VecXd, VecXd> collisionResults;
 			timeSteptimer.tic("b_tilde and f");
