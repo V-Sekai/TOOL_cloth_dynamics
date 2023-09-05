@@ -7,14 +7,7 @@
 
 Eigen::Vector4d Triangle::k =
 		Eigen::Vector4d(123.989220f, 105.181770f, 365.966217f, 44.217571f);
-// Eigen::Vector4d Triangle::k =  Eigen::Vector4d(100.0f, 0, 0.0, 0.0);
 double Triangle::k_stiff = (k[0] + 2.0 * k[1] + k[2] + k[3]) / 2.0;
-// double Triangle::k_stiff_stretching = k[0];
-// double Triangle::k_stiff_stretching = 360;
-
-// Eigen::Vector4d Triangle::k = Eigen::Vector4d(k_stiff_stretching, 0,
-// k_stiff_stretching, k_stiff_stretching); Eigen::Vector4d Triangle::k =
-// Eigen::Vector4d(1,1,1,0);
 
 Mat3x2d Triangle::getDeformationGradient(const VecXd &x_vec) const {
 	Mat3x2d p;
@@ -98,8 +91,6 @@ Vec9d Triangle::stretchingForce(const VecXd &x_new) {
 			return stretchingForceBuffer; // TODO: add area back
 		}
 	}
-
-	//  return std::make_pair(-area * hess_e, -area * grad_e);
 }
 
 Vec9d Triangle::dfi_dk(const VecXd &x_new) {
@@ -138,80 +129,16 @@ Vec9d Triangle::dfi_dk(const VecXd &x_new) {
 			return dfi_dk_buffer;
 		}
 	}
-
-	//  return std::make_pair(-area * hess_e, -area * grad_e);
 }
 
 Mat9x9d outer(Vec9d a, Vec9d b) { return (a * b.transpose()); }
-// Mat9x9d outer(Vec9d a, Vec9d b) {
-//   Mat9x9d A;
-//   for (int j = 0; j < 9; j++) A.col(j) = a * b[j];
-//   return A;
-// }
-
-#ifdef USE_DEBUG
-std::pair<std::vector<Vec9d>, Mat9x9d>
-Triangle::stretchingForceAndJacobianCheck() const {
-	Mat3x2d F = getDeformationGradient();
-	Mat2x2d I_two;
-	Mat3x3d I_three;
-	I_two.setIdentity();
-	I_three.setIdentity();
-	Mat2x2d G = (F.transpose() * F - I_two) / 2.0; // Green's strain
-	Eigen::Vector4d k(123.989220f, 105.181770f, 365.966217f, 44.217571f);
-	double e_uu = G(0, 0), e_vv = G(1, 1), e_uv = G(0, 1);
-
-	Mat2x3d p;
-	p.row(0) = Vec3d(-1, 1, 0);
-	p.row(1) = Vec3d(-1, 0, 1);
-
-	Mat2x3d D = inv_deltaUV.transpose() * p;
-	Vec3d du = D.row(0), dv = D.row(1);
-	Eigen::Matrix<double, 3, 9> Du = kronecker<1, 3, 3, 3>(du, I_three),
-								Dv = kronecker<1, 3, 3, 3>(dv, I_three);
-
-	Eigen::Matrix<double, 3, 9> Du_v2 = dF_dx.block<3, 9>(0, 0);
-	Eigen::Matrix<double, 3, 9> Dv_v2 = dF_dx.block<3, 9>(3, 0);
-
-	double diffdu = (Du - Du_v2).norm();
-	double diffdv = (Dv - Dv_v2).norm();
-
-	AssertDebug(diffdu < 1e-10);
-	AssertDebug(diffdv < 1e-10);
-
-	const Vec3d &xu = F.col(0), &xv = F.col(1); // should equal Du*mat_to_vec(X)
-	Vec9d fuu_2 = Du.transpose() * xu, fvv_2 = Dv.transpose() * xv,
-		  fuv_2 = (Du.transpose() * xv + Dv.transpose() * xu) / 2.;
-
-	Vec9d grad_e2 = (k[0] * e_uu + k[1] * e_vv) * fuu_2 +
-			(k[2] * e_vv + k[1] * e_uu) * fvv_2 //  force
-			+ 2 * k[3] * e_uv * fuv_2;
-
-	//  Vec9d grad_e2 = (k[0] * e_uu + k[1] * e_vv) * fuu_2
-	//                  + (k[1] * e_uu+ k[2] * e_vv) * fvv_2 //  force
-	//                  + 2 * k[3] * e_uv * fuv_2;
-
-	Mat9x9d hess_e2 =
-			k[0] * (outer(fuu_2, fuu_2) + std::fmax(e_uu, 0.) * Du.transpose() * Du) // Jacobian of force
-			+
-			k[2] * (outer(fvv_2, fvv_2) + std::fmax(e_vv, 0.) * Dv.transpose() * Dv) +
-			k[1] * (outer(fuu_2, fvv_2) + std::fmax(e_uu, 0.) * Dv.transpose() * Dv + outer(fvv_2, fuu_2) + std::fmax(e_vv, 0.) * Du.transpose() * Du) +
-			2. * k[3] * (outer(fuv_2, fuv_2));
-
-	std::vector<Vec9d> all9dVec;
-	all9dVec.push_back(grad_e2);
-	all9dVec.push_back(fuu_2);
-	all9dVec.push_back(fvv_2);
-	all9dVec.push_back(fuv_2);
-	return std::make_pair(all9dVec, hess_e2); // TODO: add area back
-}
-#endif
 
 // this function should be called whenever particle positions are changed since
 // F depends on current pos
 
 Mat9x9d Triangle::stretchingHessian(const VecXd &x_new) const {
 	switch (energyType) {
+		default:
 		case QUADRATIC: {
 			Mat6x9d dproj_dx = projectToManifoldBackward(x_new);
 			return k_stiff * area_rest * ((dF_dx - dproj_dx).transpose() * dF_dx);
@@ -314,9 +241,10 @@ Mat3x2d Triangle::projectToManifold(const VecXd &x_vec) const {
 	Mat3x2d F = getDeformationGradient(x_vec);
 	Mat3x2d newdeltaUV;
 	newdeltaUV.setZero();
-	//  Mat3x2d p;
-	//  p.col(0) = p1_vec3(x_vec)  - p0_vec3(x_vec);
-	//  p.col(1) = p2_vec3(x_vec)  - p0_vec3(x_vec);
+	// TODO: Restore uv mapping.
+	// Mat3x2d p;
+	// p.col(0) = p1_vec3(x_vec)  - p0_vec3(x_vec);
+	// p.col(1) = p2_vec3(x_vec)  - p0_vec3(x_vec);
 
 	Mat3x2d p = F;
 
@@ -436,9 +364,6 @@ void Triangle::projectBackward(const VecXd &x_vec, TripleVector &triplets) {
 	insertIntoTriplets(triplets, newF, 6, 3, 0, 0, c_idx, p0()->idx * 3);
 	insertIntoTriplets(triplets, newF, 6, 3, 0, 3, c_idx, p1()->idx * 3);
 	insertIntoTriplets(triplets, newF, 6, 3, 0, 6, c_idx, p2()->idx * 3);
-	//  dproj_dxnew.block<6, 3>(c_idx, p0()->idx * 3) += newF.block<6, 3>(0, 0);
-	//  dproj_dxnew.block<6, 3>(c_idx, p1()->idx * 3) += newF.block<6, 3>(0, 3);
-	//  dproj_dxnew.block<6, 3>(c_idx, p2()->idx * 3) += newF.block<6, 3>(0, 6);
 }
 
 std::pair<Mat6x9d, Mat3x2d>
@@ -507,8 +432,6 @@ Triangle::forwardBackwardCheck(const VecXd &x_vec) const {
 	Mat4x4d dF_dF1 = kronecker<2, 2, 2, 2>(inv_deltaUV.transpose(), I_two);
 	;
 	Mat4x9d dF_dx = dF_dF1 * dF1_dx;
-	//
-	//
 
 	{
 		Mat3x2d newdeltaUV2;
@@ -548,9 +471,7 @@ Triangle::forwardBackwardCheck(const VecXd &x_vec) const {
 	dF_prime_dR.block<3, 2>(0, 0) = newdeltaUV;
 	dF_prime_dR.block<3, 2>(3, 2) = newdeltaUV;
 
-	Mat6x9d dF_prime_dx =
-			dF_prime_dnewdeltaUV * dnewdeltaUV_dx + dF_prime_dR * dR_dx;
-	//      return dF_prime_dx;
+	Mat6x9d dF_prime_dx = dF_prime_dnewdeltaUV * dnewdeltaUV_dx + dF_prime_dR * dR_dx;
 
 	std::printf("%.10f %.10f %.10f %.10f\n", df_db.norm(), db_dx.norm(),
 			df_daNorm.norm(), daNorm_dx.norm());
