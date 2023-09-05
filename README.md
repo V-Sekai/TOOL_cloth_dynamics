@@ -51,10 +51,6 @@ make
 
 The progress of the optimization is saved into the `output/` directory of the root folder.
 
-### Note
-
-Feel free to contact me at liyifei@csail.mit.edu or create a Github issue if you have questions regarding setting up the repository, running examples or adding new examples.
-
 ### Citation
 
 Please consider citing our paper if your find our research or this codebase helpful:
