@@ -59,7 +59,7 @@ int main(int argc, char *argv[]) {
     std::string NUM_THREADS_ENV_VAR = getEnvVar("OMP_NUM_THREADS");
     if (NUM_THREADS_ENV_VAR.empty()) {
         Logging::logWarning(
-                "OMP_NUM_THREADS not specified in your environment variable. Defaulting to number of physical cores: " + std::to_string(n_threads));
+				"OMP_NUM_THREADS not specified in your environment variable. Defaulting to number of physical cores: " + std::to_string(n_threads) + "\n");
     } else {
         n_threads = std::stoi(NUM_THREADS_ENV_VAR);
         Logging::logColor("OMP_NUM_THREADS=" + std::to_string(n_threads) + "\n",
