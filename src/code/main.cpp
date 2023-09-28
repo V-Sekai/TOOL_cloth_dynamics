@@ -64,9 +64,14 @@ int main(int argc, char *argv[]) {
 	char *expStr = getCmdOption(argv, argv + argc, "-exp");
 	if (!demoNameStr || argc == 1) {
 		std::string message = "WARNING: No command line argument provided.\n"
-			"Usage: Please specify -demo [tshirt, sock, hat, sphere, dress] followed by -seed [number]\n"
-			"For example: -demo tshirt -seed 12345\n";
-
+		"Usage: Please specify -demo [tshirt, sock, hat, sphere, dress] followed by -seed [number]\n"
+		"For example: -demo tshirt -seed 12345\n"
+		"\nDetails of each demo:\n"
+		"- T-shirt: System Identification - Optimize wind model and cloth material parameters to match target trajectory. 4278 Dof, h=1/90s, 250 Timesteps, 6 Design Parameters\n"
+		"- Sock: Trajectory Optimization - Optimize manipulator end effector trajectories to put on the sock. 3165 Dof, h=1/160s, 400 Timesteps, 36 Design Parameters\n"
+		"- Hat: Trajectory Optimization - Optimize manipulator end effector trajectories to move the hat onto the head. 1737 Dof, h=1/100s, 400 Timesteps, 18 Design Parameters\n"
+		"- Sphere: System Identification - Optimize the frictional coefficient between the sphere and the cloth to match target trajectory. 1875 Dof, h=1/180s, 350 Timesteps, 1 Design Parameters\n"
+		"- Dress: Inverse Design - Optimize dress material parameters so that the spinning angle of the dress is 50 degrees. 10902 Dof, h=1/120s, 125 Timesteps, 2 Design Parameters";
 		Logging::logFatal(message);
 		Logging::logFatal("Exiting program...");
 		exit(0);
