@@ -62,15 +62,14 @@ int main(int argc, char *argv[]) {
 	char *demoNameStr = getCmdOption(argv, argv + argc, "-demo");
 	char *randSeedStr = getCmdOption(argv, argv + argc, "-seed");
 	char *expStr = getCmdOption(argv, argv + argc, "-exp");
-	if (!demoNameStr) {
-		Logging::logFatal("Please specify " + std::string("-demo") + "\n");
+	if (!demoNameStr || argc == 1) {
+		std::string message = "WARNING: No command line argument provided.\n"
+			"Usage: Please specify -demo [tshirt, sock, hat, sphere, dress] followed by -seed [number]\n"
+			"For example: -demo tshirt -seed 12345\n";
+
+		Logging::logFatal(message);
+		Logging::logFatal("Exiting program...");
 		exit(0);
-	}
-	if (argc == 1) {
-		Logging::logFatal(
-				"WARNING: No command line argument.\n Please specify "
-				"-demo [tshirt, sock, hat] -seed [number]\n");
-		Logging::logFatal("Exiting program...\n");
 	} else {
 		std::string demoName = std::string(demoNameStr);
 		Demos demo;
