@@ -8,42 +8,12 @@
 #include <queue>
 using namespace glm;
 
-void runBackwardTask(int demoIdx, bool isRandom, int srandSeed) {
-	Simulation::SceneConfiguration initSceneProfile =
-			OptimizationTaskConfigurations::hatScene;
-	Simulation *clothSystem =
-			Simulation::createSystem(initSceneProfile, Vec3d(0, 0, 0), true);
-
-	BackwardTaskSolver::solveDemo(
-			clothSystem, [&](const std::string &v) {}, demoIdx, isRandom, srandSeed);
-
-	delete clothSystem;
-}
-
 char *getCmdOption(char **begin, char **end, const std::string &option) {
 	char **itr = std::find(begin, end, option);
 	if (itr != end && ++itr != end) {
 		return *itr;
 	}
 	return 0;
-}
-
-void checkCmdOptionExistsAndValid(std::string option, char *input,
-		std::vector<std::string> options) {
-	if (!input) {
-		Logging::logFatal("Please specify " + std::string(option) + "\n");
-		exit(0);
-	}
-
-	if (options.empty())
-		return;
-	for (std::string candidate : options) {
-		if (candidate == std::string(input))
-			return;
-	}
-
-	Logging::logFatal("Invalid option for  " + std::string(option) + "\n");
-	exit(0);
 }
 
 static std::string getEnvVar(const std::string &name) {
@@ -92,8 +62,10 @@ int main(int argc, char *argv[]) {
 	char *demoNameStr = getCmdOption(argv, argv + argc, "-demo");
 	char *randSeedStr = getCmdOption(argv, argv + argc, "-seed");
 	char *expStr = getCmdOption(argv, argv + argc, "-exp");
-	checkCmdOptionExistsAndValid("-demo", demoNameStr, validDemos);
-
+	if (!demoNameStr) {
+		Logging::logFatal("Please specify " + std::string("-demo") + "\n");
+		exit(0);
+	}
 	if (argc == 1) {
 		Logging::logFatal(
 				"WARNING: No command line argument.\n Please specify "
@@ -113,8 +85,18 @@ int main(int argc, char *argv[]) {
 		} else if (demoName == "dress") {
 			demo = Demos::DEMO_DRESS_TWIRL;
 		}
-		checkCmdOptionExistsAndValid("-seed", randSeedStr, {});
-		runBackwardTask(demo, true, std::atoi(randSeedStr));
+		if (!randSeedStr) {
+			Logging::logFatal("Please specify " + std::string("-seed") + "\n");
+			exit(0);
+		}
+
+		Simulation::SceneConfiguration initSceneProfile =
+				OptimizationTaskConfigurations::hatScene;
+		Simulation *clothSystem =
+				Simulation::createSystem(initSceneProfile, Vec3d(0, 0, 0), true);
+		BackwardTaskSolver::solveDemo(
+				clothSystem, [&](const std::string &v) {}, demo, true, std::atoi(randSeedStr));
+		delete clothSystem;
 		std::printf("Exiting program...\n");
 	}
 
