@@ -6,4 +6,6 @@ The FCL is a powerful tool that can handle complex geometries and enable efficie
 
 Here's the link to the library: [Flexible Collision Library (FCL)](https://github.com/flexible-collision-library/fcl)
 
+Implementing body-cloth collision is another aspect that needs to be addressed. Unfortunately, I currently don't have the bandwidth to delve into this at the moment. If you're interested in exploring this further, you might find this issue helpful: [Body-Cloth Collision Issue](https://github.com/omegaiota/DiffCloth/issues/10)
+
 If you decide to proceed with adding arbitrary mesh Continuous Collision Detection (CCD) to the library, I'd be more than happy to provide support. I can answer any questions you might have and assist you through Zoom calls. Please feel free to reach out if you need further assistance or guidance.
