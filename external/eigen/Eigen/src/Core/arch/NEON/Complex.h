@@ -11,6 +11,9 @@
 #ifndef EIGEN_COMPLEX_NEON_H
 #define EIGEN_COMPLEX_NEON_H
 
+// IWYU pragma: private
+#include "../../InternalHeaderCheck.h"
+
 namespace Eigen {
 
 namespace internal {
@@ -57,13 +60,13 @@ template<> struct packet_traits<std::complex<float> > : default_packet_traits
     Vectorizable = 1,
     AlignedOnScalar = 1,
     size = 2,
-    HasHalfPacket = 1,
 
     HasAdd       = 1,
     HasSub       = 1,
     HasMul       = 1,
     HasDiv       = 1,
     HasNegate    = 1,
+    HasSqrt      = 1,
     HasAbs       = 0,
     HasAbs2      = 0,
     HasMin       = 0,
@@ -124,24 +127,17 @@ template<> EIGEN_STRONG_INLINE Packet1cf psub<Packet1cf>(const Packet1cf& a, con
 template<> EIGEN_STRONG_INLINE Packet2cf psub<Packet2cf>(const Packet2cf& a, const Packet2cf& b)
 { return Packet2cf(psub<Packet4f>(a.v, b.v)); }
 
-template<> EIGEN_STRONG_INLINE Packet2cf pxor<Packet2cf>(const Packet2cf& a, const Packet2cf& b);
-template<> EIGEN_STRONG_INLINE Packet2cf paddsub<Packet2cf>(const Packet2cf& a, const Packet2cf& b)
-{
-  Packet4f mask = {-0.0f, -0.0f, 0.0f, 0.0f};
-  return Packet2cf(padd(a.v, pxor(mask, b.v)));  
-}
-
 template<> EIGEN_STRONG_INLINE Packet1cf pnegate(const Packet1cf& a) { return Packet1cf(pnegate<Packet2f>(a.v)); }
 template<> EIGEN_STRONG_INLINE Packet2cf pnegate(const Packet2cf& a) { return Packet2cf(pnegate<Packet4f>(a.v)); }
 
 template<> EIGEN_STRONG_INLINE Packet1cf pconj(const Packet1cf& a)
 {
-  const Packet2ui b = vreinterpret_u32_f32(a.v);
+  const Packet2ui b = Packet2ui(vreinterpret_u32_f32(a.v));
   return Packet1cf(vreinterpret_f32_u32(veor_u32(b, p2ui_CONJ_XOR())));
 }
 template<> EIGEN_STRONG_INLINE Packet2cf pconj(const Packet2cf& a)
 {
-  const Packet4ui b = vreinterpretq_u32_f32(a.v);
+  const Packet4ui b = Packet4ui(vreinterpretq_u32_f32(a.v));
   return Packet2cf(vreinterpretq_f32_u32(veorq_u32(b, p4ui_CONJ_XOR())));
 }
 
@@ -349,86 +345,16 @@ template<> EIGEN_STRONG_INLINE std::complex<float> predux_mul<Packet2cf>(const P
   return s;
 }
 
-template<> struct conj_helper<Packet1cf,Packet1cf,false,true>
-{
-  EIGEN_STRONG_INLINE Packet1cf pmadd(const Packet1cf& x, const Packet1cf& y, const Packet1cf& c) const
-  { return padd(pmul(x,y),c); }
-
-  EIGEN_STRONG_INLINE Packet1cf pmul(const Packet1cf& a, const Packet1cf& b) const
-  { return internal::pmul(a, pconj(b)); }
-};
-
-template<> struct conj_helper<Packet1cf,Packet1cf,true,false>
-{
-  EIGEN_STRONG_INLINE Packet1cf pmadd(const Packet1cf& x, const Packet1cf& y, const Packet1cf& c) const
-  { return padd(pmul(x,y),c); }
-
-  EIGEN_STRONG_INLINE Packet1cf pmul(const Packet1cf& a, const Packet1cf& b) const
-  { return internal::pmul(pconj(a), b); }
-};
-
-template<> struct conj_helper<Packet1cf,Packet1cf,true,true>
-{
-  EIGEN_STRONG_INLINE Packet1cf pmadd(const Packet1cf& x, const Packet1cf& y, const Packet1cf& c) const
-  { return padd(pmul(x,y),c); }
-
-  EIGEN_STRONG_INLINE Packet1cf pmul(const Packet1cf& a, const Packet1cf& b) const
-  { return pconj(internal::pmul(a,b)); }
-};
-
-template<> struct conj_helper<Packet2cf,Packet2cf,false,true>
-{
-  EIGEN_STRONG_INLINE Packet2cf pmadd(const Packet2cf& x, const Packet2cf& y, const Packet2cf& c) const
-  { return padd(pmul(x,y),c); }
-
-  EIGEN_STRONG_INLINE Packet2cf pmul(const Packet2cf& a, const Packet2cf& b) const
-  { return internal::pmul(a, pconj(b)); }
-};
-
-template<> struct conj_helper<Packet2cf,Packet2cf,true,false>
-{
-  EIGEN_STRONG_INLINE Packet2cf pmadd(const Packet2cf& x, const Packet2cf& y, const Packet2cf& c) const
-  { return padd(pmul(x,y),c); }
-
-  EIGEN_STRONG_INLINE Packet2cf pmul(const Packet2cf& a, const Packet2cf& b) const
-  { return internal::pmul(pconj(a), b); }
-};
-
-template<> struct conj_helper<Packet2cf,Packet2cf,true,true>
-{
-  EIGEN_STRONG_INLINE Packet2cf pmadd(const Packet2cf& x, const Packet2cf& y, const Packet2cf& c) const
-  { return padd(pmul(x,y),c); }
-
-  EIGEN_STRONG_INLINE Packet2cf pmul(const Packet2cf& a, const Packet2cf& b) const
-  { return pconj(internal::pmul(a,b)); }
-};
-
 EIGEN_MAKE_CONJ_HELPER_CPLX_REAL(Packet1cf,Packet2f)
 EIGEN_MAKE_CONJ_HELPER_CPLX_REAL(Packet2cf,Packet4f)
 
 template<> EIGEN_STRONG_INLINE Packet1cf pdiv<Packet1cf>(const Packet1cf& a, const Packet1cf& b)
 {
-  // TODO optimize it for NEON
-  Packet1cf res = conj_helper<Packet1cf, Packet1cf, false, true>().pmul(a,b);
-  Packet2f s, rev_s;
-
-  // this computes the norm
-  s = vmul_f32(b.v, b.v);
-  rev_s = vrev64_f32(s);
-
-  return Packet1cf(pdiv<Packet2f>(res.v, vadd_f32(s, rev_s)));
+  return pdiv_complex(a, b);
 }
 template<> EIGEN_STRONG_INLINE Packet2cf pdiv<Packet2cf>(const Packet2cf& a, const Packet2cf& b)
 {
-  // TODO optimize it for NEON
-  Packet2cf res = conj_helper<Packet2cf, Packet2cf, false, true>().pmul(a,b);
-  Packet4f s, rev_s;
-
-  // this computes the norm
-  s = vmulq_f32(b.v, b.v);
-  rev_s = vrev64q_f32(s);
-
-  return Packet2cf(pdiv<Packet4f>(res.v, vaddq_f32(s, rev_s)));
+  return pdiv_complex(a, b);
 }
 
 EIGEN_DEVICE_FUNC inline void ptranspose(PacketBlock<Packet1cf, 1>& /*kernel*/) {}
@@ -451,7 +377,7 @@ template<> EIGEN_STRONG_INLINE Packet2cf psqrt<Packet2cf>(const Packet2cf& a) {
 #if EIGEN_ARCH_ARM64 && !EIGEN_APPLE_DOUBLE_NEON_BUG
 
 // See bug 1325, clang fails to call vld1q_u64.
-#if EIGEN_COMP_CLANG || EIGEN_COMP_CASTXML
+#if EIGEN_COMP_CLANG || EIGEN_COMP_CASTXML || EIGEN_COMP_CPE
   static uint64x2_t p2ul_CONJ_XOR = {0x0, 0x8000000000000000};
 #else
   const uint64_t  p2ul_conj_XOR_DATA[] = { 0x0, 0x8000000000000000 };
@@ -474,13 +400,13 @@ template<> struct packet_traits<std::complex<double> >  : default_packet_traits
     Vectorizable = 1,
     AlignedOnScalar = 0,
     size = 1,
-    HasHalfPacket = 0,
 
     HasAdd    = 1,
     HasSub    = 1,
     HasMul    = 1,
     HasDiv    = 1,
     HasNegate = 1,
+    HasSqrt   = 1,
     HasAbs    = 0,
     HasAbs2   = 0,
     HasMin    = 0,
@@ -610,43 +536,11 @@ template<> EIGEN_STRONG_INLINE std::complex<double> predux<Packet1cd>(const Pack
 
 template<> EIGEN_STRONG_INLINE std::complex<double> predux_mul<Packet1cd>(const Packet1cd& a) { return pfirst(a); }
 
-template<> struct conj_helper<Packet1cd, Packet1cd, false,true>
-{
-  EIGEN_STRONG_INLINE Packet1cd pmadd(const Packet1cd& x, const Packet1cd& y, const Packet1cd& c) const
-  { return padd(pmul(x,y),c); }
-
-  EIGEN_STRONG_INLINE Packet1cd pmul(const Packet1cd& a, const Packet1cd& b) const
-  { return internal::pmul(a, pconj(b)); }
-};
-
-template<> struct conj_helper<Packet1cd, Packet1cd, true,false>
-{
-  EIGEN_STRONG_INLINE Packet1cd pmadd(const Packet1cd& x, const Packet1cd& y, const Packet1cd& c) const
-  { return padd(pmul(x,y),c); }
-
-  EIGEN_STRONG_INLINE Packet1cd pmul(const Packet1cd& a, const Packet1cd& b) const
-  { return internal::pmul(pconj(a), b); }
-};
-
-template<> struct conj_helper<Packet1cd, Packet1cd, true,true>
-{
-  EIGEN_STRONG_INLINE Packet1cd pmadd(const Packet1cd& x, const Packet1cd& y, const Packet1cd& c) const
-  { return padd(pmul(x,y),c); }
-
-  EIGEN_STRONG_INLINE Packet1cd pmul(const Packet1cd& a, const Packet1cd& b) const
-  { return pconj(internal::pmul(a,b)); }
-};
-
 EIGEN_MAKE_CONJ_HELPER_CPLX_REAL(Packet1cd,Packet2d)
 
 template<> EIGEN_STRONG_INLINE Packet1cd pdiv<Packet1cd>(const Packet1cd& a, const Packet1cd& b)
 {
-  // TODO optimize it for NEON
-  Packet1cd res = conj_helper<Packet1cd,Packet1cd,false,true>().pmul(a,b);
-  Packet2d s = pmul<Packet2d>(b.v, b.v);
-  Packet2d rev_s = preverse<Packet2d>(s);
-
-  return Packet1cd(pdiv(res.v, padd<Packet2d>(s,rev_s)));
+  return pdiv_complex(a, b);
 }
 
 EIGEN_STRONG_INLINE Packet1cd pcplxflip/*<Packet1cd>*/(const Packet1cd& x)

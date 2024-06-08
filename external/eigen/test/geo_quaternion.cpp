@@ -98,6 +98,10 @@ template<typename Scalar, int Options> void quaternion(void)
     VERIFY_IS_MUCH_SMALLER_THAN(abs(q1.angularDistance(q2) - refangle), Scalar(1));
   }
 
+  // Action on vector by the q v q* formula
+  VERIFY_IS_APPROX(q1 * v2, (q1 * Quaternionx(Scalar(0), v2) * q1.inverse()).vec());
+  VERIFY_IS_APPROX(q1.inverse() * v2, (q1.inverse() * Quaternionx(Scalar(0), v2) * q1).vec());
+
   // rotation matrix conversion
   VERIFY_IS_APPROX(q1 * v2, q1.toRotationMatrix() * v2);
   VERIFY_IS_APPROX(q1 * q2 * v2,
@@ -218,10 +222,6 @@ template<typename Scalar> void mapQuaternion(void){
   VERIFY_IS_APPROX(q1.coeffs(), q2.coeffs());
   VERIFY_IS_APPROX(q1.coeffs(), q3.coeffs());
   VERIFY_IS_APPROX(q4.coeffs(), q3.coeffs());
-  #ifdef EIGEN_VECTORIZE
-  if(internal::packet_traits<Scalar>::Vectorizable)
-    VERIFY_RAISES_ASSERT((MQuaternionA(array3unaligned)));
-  #endif
     
   VERIFY_IS_APPROX(mq1 * (mq1.inverse() * v1), v1);
   VERIFY_IS_APPROX(mq1 * (mq1.conjugate() * v1), v1);
@@ -281,10 +281,6 @@ template<typename Scalar> void quaternionAlignment(void){
 
   VERIFY_IS_APPROX(q1->coeffs(), q2->coeffs());
   VERIFY_IS_APPROX(q1->coeffs(), q3->coeffs());
-  #if defined(EIGEN_VECTORIZE) && EIGEN_MAX_STATIC_ALIGN_BYTES>0
-  if(internal::packet_traits<Scalar>::Vectorizable && internal::packet_traits<Scalar>::size<=4)
-    VERIFY_RAISES_ASSERT((::new(reinterpret_cast<void*>(arrayunaligned)) QuaternionA));
-  #endif
 }
 
 template<typename PlainObjectType> void check_const_correctness(const PlainObjectType&)
@@ -294,14 +290,12 @@ template<typename PlainObjectType> void check_const_correctness(const PlainObjec
   // CMake can help with that.
 
   // verify that map-to-const don't have LvalueBit
-  typedef typename internal::add_const<PlainObjectType>::type ConstPlainObjectType;
+  typedef std::add_const_t<PlainObjectType> ConstPlainObjectType;
   VERIFY( !(internal::traits<Map<ConstPlainObjectType> >::Flags & LvalueBit) );
   VERIFY( !(internal::traits<Map<ConstPlainObjectType, Aligned> >::Flags & LvalueBit) );
   VERIFY( !(Map<ConstPlainObjectType>::Flags & LvalueBit) );
   VERIFY( !(Map<ConstPlainObjectType, Aligned>::Flags & LvalueBit) );
 }
-
-#if EIGEN_HAS_RVALUE_REFERENCES
 
 // Regression for bug 1573
 struct MovableClass {
@@ -314,8 +308,6 @@ struct MovableClass {
   MovableClass& operator=(MovableClass&&) = default;
   Quaternionf m_quat;
 };
-
-#endif
 
 EIGEN_DECLARE_TEST(geo_quaternion)
 {

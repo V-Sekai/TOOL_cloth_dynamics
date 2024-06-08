@@ -32,14 +32,12 @@ class AnnoyingScalar
 {
   public:
     AnnoyingScalar()                { init(); *v = 0;  }
-    AnnoyingScalar(long double _v)  { init(); *v = _v; }
-    AnnoyingScalar(double _v)       { init(); *v = _v; }
+    AnnoyingScalar(long double _v)  { init(); *v = static_cast<float>(_v); }
+    AnnoyingScalar(double _v)       { init(); *v = static_cast<float>(_v); }
     AnnoyingScalar(float _v)        { init(); *v = _v; }
-    AnnoyingScalar(int _v)          { init(); *v = _v; }
-    AnnoyingScalar(long _v)         { init(); *v = _v; }
-    #if EIGEN_HAS_CXX11
-    AnnoyingScalar(long long _v)    { init(); *v = _v; }
-    #endif
+    AnnoyingScalar(int _v)          { init(); *v = static_cast<float>(_v); }
+    AnnoyingScalar(long _v)         { init(); *v = static_cast<float>(_v); }
+    AnnoyingScalar(long long _v)    { init(); *v = static_cast<float>(_v); }
     AnnoyingScalar(const AnnoyingScalar& other) { init(); *v = *(other.v); }
     ~AnnoyingScalar() {
       if(v!=&data)
@@ -67,7 +65,7 @@ class AnnoyingScalar
 
     AnnoyingScalar operator-() const
     { return AnnoyingScalar(-*v); }
-    
+
     AnnoyingScalar operator-(const AnnoyingScalar& other) const
     { return AnnoyingScalar(*v-*other.v); }
     
@@ -83,8 +81,8 @@ class AnnoyingScalar
     AnnoyingScalar& operator/=(const AnnoyingScalar& other) { *v /= *other.v; return *this; }
     AnnoyingScalar& operator= (const AnnoyingScalar& other) { *v  = *other.v; return *this; }
 
-    bool operator==(const AnnoyingScalar& other) const { return *v == *other.v; }
-    bool operator!=(const AnnoyingScalar& other) const { return *v != *other.v; }
+    bool operator==(const AnnoyingScalar& other) const { return numext::equal_strict(*v, *other.v); }
+    bool operator!=(const AnnoyingScalar& other) const { return numext::not_equal_strict(*v, *other.v); }
     bool operator<=(const AnnoyingScalar& other) const { return *v <= *other.v; }
     bool operator< (const AnnoyingScalar& other) const { return *v <  *other.v; }
     bool operator>=(const AnnoyingScalar& other) const { return *v >= *other.v; }
@@ -126,7 +124,7 @@ template<>
 struct NumTraits<AnnoyingScalar> : NumTraits<float>
 {
   enum {
-    RequireInitialization = true
+    RequireInitialization = 1,
   };
   typedef AnnoyingScalar Real;
   typedef AnnoyingScalar Nested;
@@ -145,10 +143,6 @@ bool (isfinite)(const AnnoyingScalar& x) {
 }
 
 namespace internal {
-  template<> EIGEN_STRONG_INLINE AnnoyingScalar pcmp_eq(const AnnoyingScalar& a, const AnnoyingScalar& b)
-  { return AnnoyingScalar(pcmp_eq(*a.v, *b.v)); }
-  template<> EIGEN_STRONG_INLINE AnnoyingScalar pselect(const AnnoyingScalar& mask, const AnnoyingScalar& a, const AnnoyingScalar& b)
-  { return numext::equal_strict(*mask.v, 0.f) ? b : a; }
   template<> EIGEN_STRONG_INLINE double cast(const AnnoyingScalar& x) { return double(*x.v); }
   template<> EIGEN_STRONG_INLINE float  cast(const AnnoyingScalar& x) { return *x.v; }
 }

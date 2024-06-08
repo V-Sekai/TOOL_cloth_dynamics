@@ -92,7 +92,8 @@ include_directories(dependencies/include)
 include_directories(src/assets)
 include_directories(src/gpu)
 include_directories(external/LBFGSpp/include)
-
+include_directories(external/fcl/include)
+include_directories(external/fcl/external/libccd/src)
 include_directories(dependencies/lib)
 
 
@@ -108,7 +109,7 @@ target_link_directories(${PROJECT_NAME} PRIVATE "/usr/local/Cellar/libomp/16.0.6
 target_link_libraries(${EXECUTABLE_NAME} OpenMP::OpenMP_CXX)
 target_include_directories(${EXECUTABLE_NAME} PRIVATE ${EXTERNAL_HEADER})
 
-
+add_subdirectory("external/fcl")
 
 
 

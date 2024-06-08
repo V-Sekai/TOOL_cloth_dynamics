@@ -11,6 +11,9 @@
 #ifndef EIGEN_MAP_H
 #define EIGEN_MAP_H
 
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
+
 namespace Eigen {
 
 namespace internal {
@@ -47,7 +50,7 @@ private:
   * \brief A matrix or vector expression mapping an existing array of data.
   *
   * \tparam PlainObjectType the equivalent matrix type of the mapped data
-  * \tparam MapOptions specifies the pointer alignment in bytes. It can be: \c #Aligned128, , \c #Aligned64, \c #Aligned32, \c #Aligned16, \c #Aligned8 or \c #Unaligned.
+  * \tparam MapOptions specifies the pointer alignment in bytes. It can be: \c #Aligned128, \c #Aligned64, \c #Aligned32, \c #Aligned16, \c #Aligned8 or \c #Unaligned.
   *                The default is \c #Unaligned.
   * \tparam StrideType optionally specifies strides. By default, Map assumes the memory layout
   *                   of an ordinary, contiguous array. This can be overridden by specifying strides.
@@ -129,7 +132,6 @@ template<typename PlainObjectType, int MapOptions, typename StrideType> class Ma
     explicit inline Map(PointerArgType dataPtr, const StrideType& stride = StrideType())
       : Base(cast_to_pointer_type(dataPtr)), m_stride(stride)
     {
-      PlainObjectType::Base::_check_template_params();
     }
 
     /** Constructor in the dynamic-size vector case.
@@ -142,7 +144,6 @@ template<typename PlainObjectType, int MapOptions, typename StrideType> class Ma
     inline Map(PointerArgType dataPtr, Index size, const StrideType& stride = StrideType())
       : Base(cast_to_pointer_type(dataPtr), size), m_stride(stride)
     {
-      PlainObjectType::Base::_check_template_params();
     }
 
     /** Constructor in the dynamic-size matrix case.
@@ -156,7 +157,6 @@ template<typename PlainObjectType, int MapOptions, typename StrideType> class Ma
     inline Map(PointerArgType dataPtr, Index rows, Index cols, const StrideType& stride = StrideType())
       : Base(cast_to_pointer_type(dataPtr), rows, cols), m_stride(stride)
     {
-      PlainObjectType::Base::_check_template_params();
     }
 
     EIGEN_INHERIT_ASSIGNMENT_OPERATORS(Map)
