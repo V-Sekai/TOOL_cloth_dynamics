@@ -37,6 +37,7 @@ int main(int argc, char *argv[]) {
 	}
 	bool parallelizeEigen = true;
 	if (OPENMP_ENABLED) {
+		Eigen::initParallel();
 		omp_set_num_threads(n_threads);
 		if (parallelizeEigen) {
 			Eigen::setNbThreads(n_threads);
