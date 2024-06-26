@@ -1438,8 +1438,8 @@ VecXd Simulation::solveDirect(VecXd &dL_dxnew, double t_2, SpMat &dproj_dxnew_t,
 			currentSysMat.C_t * dr_df_t;
 
 	SpMat P_N_T = currentSysMat.P - delta_P_T;
-	factorizeDirectSolverSparseLU(P_N_T, solverSparseLU, "factorize sparseLU");
-	VecXd u_star = solverSparseLU.solve(dL_dxnew);
+	factorizeDirectSolverSparseQR(P_N_T, solverSparseQR, "factorize SparseQR");
+	VecXd u_star = solverSparseQR.solve(dL_dxnew);
 	timeSteptimer.toc();
 	return u_star;
 }
@@ -4550,29 +4550,29 @@ VecXd Simulation::getParticleNormals(std::vector<Triangle> mesh,
 	return normals;
 }
 
-SpMat Simulation::factorizeDirectSolverSparseLU(
-		const SpMat &A, Eigen::SparseLU<SpMat> &lltSolver,
-		const std::string &warning_msg) {
-	lltSolver.compute(A);
-	SpMat Afixed = A;
-	double regularization = 1e-10;
-	bool success = true;
-	SpMat I = SpMat(A.rows(), A.cols());
-	I.setIdentity();
-	while (lltSolver.info() != Eigen::Success) {
-		regularization *= 10;
-		Afixed = Afixed + regularization * I;
-		lltSolver.compute(Afixed);
-		success = lltSolver.info();
-		if (regularization > 100)
-			break;
-	}
-	if (!success) {
-		std::cout << "Warning: " << warning_msg << " adding " << regularization
-				  << " identites.(llt solver)" << std::endl;
-	}
+SpMat Simulation::factorizeDirectSolverSparseQR(
+        const SpMat &A, Eigen::SparseQR<SpMat, Eigen::COLAMDOrdering<int>> &qrSolver,
+        const std::string &warning_msg) {
+    qrSolver.compute(A);
+    SpMat Afixed = A;
+    double regularization = 1e-10;
+    bool success = true;
+    SpMat I = SpMat(A.rows(), A.cols());
+    I.setIdentity();
+    while (qrSolver.info() != Eigen::Success) {
+        regularization *= 10;
+        Afixed = Afixed + regularization * I;
+        qrSolver.compute(Afixed);
+        success = qrSolver.info();
+        if (regularization > 100)
+            break;
+    }
+    if (!success) {
+        std::cout << "Warning: " << warning_msg << " adding " << regularization
+                  << " identites.(qr solver)" << std::endl;
+    }
 
-	return Afixed;
+    return Afixed;
 }
 
 SpMat Simulation::factorizeDirectSolverLLT(

@@ -3,7 +3,6 @@
 // Email: liyifei@csail.mit.edu
 //
 #include "BackwardTaskSolver.h"
-#include "OptimizationTaskSetup.h"
 #include <LBFGSB.h>
 #include <LBFGSpp/Param.h>
 
