@@ -30,42 +30,17 @@ An advanced "Hat" task is presented where the objective is to train a generaliza
 
 To create this tool, you would need to write a script that takes as input the motion data of a virtual clothing item. The script should then use this data to estimate the material parameters of the clothing.
 
-```gdscript
-# Sample script for estimating material parameters
-func estimate_material_parameters(motion_data):
-    # Your code here to process the motion data and estimate parameters
-    return estimated_parameters
-```
-
 ## Clothing Interaction Modeling Tool
 
 This tool would involve creating a script that models interactions between clothing and an avatar's body. This could be done by defining collision shapes for the avatar and the clothing, and then writing code to handle these collisions.
-
-```gdscript
-# Sample script for modeling clothing interactions
-func model_clothing_interactions(clothing, avatar):
-    # Your code here to define collision shapes and handle collisions
-```
 
 ## Cloth Property Optimization Tool
 
 This tool would involve writing a script that optimizes cloth material parameters to achieve a specific fit or look. This could be done using various optimization algorithms.
 
-```gdscript
-# Sample script for cloth property optimization
-func optimize_cloth_properties(clothing, target_fit):
-    # Your code here to adjust the properties of the clothing to achieve the target fit
-```
-
 ## Real-to-Sim Motion Recreation Tool
 
 To create this tool, you would need to write a script that recreates real-world motion in a simulation. This could involve using physics simulations or other techniques.
-
-```gdscript
-# Sample script for real-to-sim motion recreation
-func recreate_motion(real_world_data):
-    # Your code here to recreate the real-world motion in the simulation
-```
 
 ## Chart
 
