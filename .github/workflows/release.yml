@@ -13,14 +13,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
         include:
           - os: ubuntu-latest
             asset_name: DiffCloth-linux-x86_64.zip
           - os: windows-latest
             asset_name: DiffCloth-windows-x86_64.zip
-          - os: macos-latest
-            asset_name: DiffCloth-macos-x86_64.zip
 
     steps:
       - uses: actions/checkout@v2
@@ -34,9 +32,6 @@ jobs:
             choco install zip
           elif [[ "$RUNNER_OS" == "Linux" ]]; then
             sudo apt-get install -y cmake
-          elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            brew install cmake
-            brew install libomp
           fi
 
       - name: Create Build Directory
@@ -63,19 +58,10 @@ jobs:
             chmod +x build/DiffCloth*
           fi
 
-      - name: Copy libomp.dylib
-        if: matrix.os == 'macos-latest'
-        run: |
-          cp /usr/local/opt/libomp/lib/libomp.dylib build/
-
       - name: Zip Binary and Assets
         shell: bash
         run: |
-          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            zip -r ${{ matrix.asset_name }} build/libomp.dylib build/DiffCloth* src/assets README.md LICENSE
-          else
-            zip -r ${{ matrix.asset_name }} build/DiffCloth* src/assets README.md LICENSE
-          fi
+          zip -r ${{ matrix.asset_name }} build/DiffCloth* src/assets README.md LICENSE
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v2
@@ -113,7 +99,7 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const artifacts = ['DiffCloth-linux-x86_64.zip', 'DiffCloth-windows-x86_64.zip', 'DiffCloth-macos-x86_64.zip'];
+            const artifacts = ['DiffCloth-linux-x86_64.zip', 'DiffCloth-windows-x86_64.zip'];
             for (const artifact of artifacts) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, artifact);
               if (fs.existsSync(filePath)) {
