@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/yixuan/LBFGSpp.git
+	branch = master
+	commit = aa9c46687897a7d9fbbdf08aa862b1833b615012
+	parent = 0bf028f8c6c744f5972068040da56c0bf35fec03
+	method = merge
+	cmdver = 0.4.6
