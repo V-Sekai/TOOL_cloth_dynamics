@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cmake .. -G "MinGW Makefiles"
+            cmake .. -G "Visual Studio 17 2022" -A x64
           else
             cmake ..
           fi
