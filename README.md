@@ -9,24 +9,16 @@ Code repository for our paper [DiffCloth: Differentiable Cloth Simulation with D
 
 ### Tested Operating Systems
 
-Ubuntu 22.04 | Mac OS 12
+Ubuntu 22.04 | Mac OS 15
 
-### 1. Download the repo:
-
-### 2. Build CPP code with Cmake:
-
-From the top directory:
-
-```
-mkdir build
-cd build
-cmake ..
-make
-```
-
-### 3. Optimize/Visualize Section 6 Experiments:
+### 1. Optimize/Visualize Section 6 Experiments:
 
 - Run optimization:
+
+  ```
+  # Install just
+  just optimize shirt 123
+  ```
 
   ```
   ./DiffCloth -demo {demooptions} -mode optimize -seed {randseed}
