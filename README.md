@@ -9,19 +9,15 @@ Code repository for our paper [DiffCloth: Differentiable Cloth Simulation with D
 
 ### Tested Operating Systems
 
-Ubuntu 22.04 | Mac OS 15
+Ubuntu 22.04 | Mac OS 15 | Windows 11
 
 ### 1. Optimize/Visualize Section 6 Experiments:
 
 - Run optimization:
 
   ```
-  # Install just
-  just optimize shirt 123
-  ```
-
-  ```
-  ./DiffCloth -demo {demooptions} -mode optimize -seed {randseed}
+  just build
+  ./DiffCloth -demo  -mode optimize -seed {randseed}
   ```
 
   where `{demooptions}` is the name of the demos from the following options and `{randseed}` is an integer for random initialization of the initial guesses
@@ -34,12 +30,6 @@ Ubuntu 22.04 | Mac OS 15
   - Hat: `hat`
   - Sock: `sock`
   - Dress: `dress`
-
-- Visualize optimization iters:
-
-  ```
-  ./DiffCloth -demo {demooptions} -mode visualize -exp {expName}
-  ```
 
 The progress of the optimization is saved into the `output/` directory of the root folder.
 
