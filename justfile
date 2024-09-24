@@ -1,8 +1,9 @@
 # Justfile for building and running quadwild on a Blender Monkey
 
 build:
-    mkdir -p build
-    cd build && cmake .. && cmake --build . --parallel
+    mkdir build
+    cd build && cmake .. -G "MinGW Makefiles"
+    cmake --build build --parallel
 
 optimize demo randseed:
     @just build
