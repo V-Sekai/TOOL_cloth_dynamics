@@ -2,7 +2,7 @@
 
 build:
     mkdir -p build
-    cd build && cmake .. && make -j
+    cd build && cmake .. && cmake --build . --parallel
 
 optimize demo randseed:
     @just build
