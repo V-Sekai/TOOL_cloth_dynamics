@@ -2,7 +2,7 @@
 
 build:
     mkdir build -p
-    cd build && cmake .. -G "MinGW Makefiles"
+    cd build && cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
     cmake --build build --parallel
 
 optimize demo randseed:
