@@ -83,6 +83,7 @@ void BackwardTaskSolver::optimizeLBFGS(
 		std::cout << "f(x) = " << minLoss << std::endl;
 	} catch (const std::exception &error) {
 		std::printf("LBFGS terminated early: %s\n", error.what());
+		helper.saveLastIter();
 		system->exportStatistics((Demos)demoNum, helper.statistics, helper.taskInfo,
 				true);
 	}
