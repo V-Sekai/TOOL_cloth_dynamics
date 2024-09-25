@@ -19,5 +19,7 @@ dist/
 __pycache__/
 .cache/
 output/
-
 external/.DS_Store
+godot.exe
+
+.godot/
