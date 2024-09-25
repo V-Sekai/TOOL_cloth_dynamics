@@ -9,7 +9,7 @@ build:
 
 optimize demo randseed:
     @just build
-    samply record ./build/DiffCloth -demo {{demo}} -mode optimize -seed {{randseed}}
+    ./build/DiffCloth -demo {{demo}} -mode optimize -seed {{randseed}}
 
 clean:
     rm -rf build
