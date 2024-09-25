@@ -11,10 +11,6 @@ optimize demo randseed:
     @just build
     ./build/DiffCloth -demo {{demo}} -mode optimize -seed {{randseed}}
 
-visualize demo expName:
-    @just optimize {{demo}} {{expName}}
-    ./build/DiffCloth -demo {{demo}} -mode visualize -exp {{expName}}
-
 clean:
     rm -rf build
 
