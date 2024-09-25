@@ -471,9 +471,8 @@ public:
 	Simulation::ParamInfo groundtruthParam;
 	std::vector<std::vector<BackwardInformation>> backwardRecordsFiniteDiff;
 	Timer timer;
-
 	Eigen::SimplicialLLT<SpMat> Msolver;
-	Eigen::SparseQR<SpMat, Eigen::COLAMDOrdering<int>> solverSparseQR;
+	Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, Eigen::IncompleteLUT<double, int>> solverBiCGSTAB;
 
 	Simulation(Vec3d center) :
 			systemCenter(center),
@@ -1003,7 +1002,7 @@ private:
 			Eigen::SimplicialLLT<SpMat> &lltSolver,
 			const std::string &warning_msg);
 
-	SpMat factorizeDirectSolverSparseQR(const SpMat &A, Eigen::SparseQR<SpMat, Eigen::COLAMDOrdering<int>> &qrSolver, const std::string &warning_msg);
+	SpMat factorizeDirectSolverBiCGSTAB(const SpMat &A, Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, Eigen::IncompleteLUT<double, int>> &solverBiCGSTAB, const std::string &warning_msg);
 
 	std::chrono::steady_clock::time_point getTimeNow() {
 		return std::chrono::steady_clock::now();
