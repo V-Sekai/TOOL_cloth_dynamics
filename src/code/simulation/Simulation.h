@@ -340,7 +340,6 @@ public:
 	SystemConfiguration myConfig;
 	//    static AttachmentConfigs restPosConfiguration;
 	SceneConfiguration sceneConfig;
-	bool backwardGradientForceDirectSolver = false;
 	static volatile bool gravityEnabled, windEnabled, staticEnabled,
 			contactEnabled, selfcollisionEnabled, enableConstantForcefield;
 	static volatile bool bendingEnabled;

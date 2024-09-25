@@ -134,22 +134,22 @@ Simulation::FabricConfiguration
 			.name = "dim3x3-grid5x5-dens0.2-k50"
 		};
 
-Simulation::FabricConfiguration
-		OptimizationTaskConfigurations::dressv7khandsUpDrape = {
-			.clothDimX = 13,
-			.clothDimY = 13,
-			.k_stiff_stretching = 3000, // 2000,
-			.k_stiff_bending = 0.3, // 0.2,
-			.gridNumX = 40, // 25,
-			.gridNumY = 80, // 50,
-			.density = 0.3,
-			.keepOriginalScalePoint = false,
-			.isModel = true,
-			.custominitPos = false,
-			.fabricIdx = FabricEnumArray::DRESS_v7k_DRAPE,
-			.color = Vec3d(0.9, 0.9, 0.9),
-			.name = "remeshed/dress-handsup-drape.obj",
-		};
+Simulation::FabricConfiguration 
+	OptimizationTaskConfigurations::dressv7khandsUpDrape = {
+		.clothDimX = 13,
+		.clothDimY = 13,
+		.k_stiff_stretching = 2500,
+		.k_stiff_bending = 0.25,
+		.gridNumX = 35,
+		.gridNumY = 70,
+		.density = 0.3,
+		.keepOriginalScalePoint = false,
+		.isModel = true,
+		.custominitPos = false,
+		.fabricIdx = FabricEnumArray::DRESS_v7k_DRAPE,
+		.color = Vec3d(0.9, 0.9, 0.9),
+		.name = "remeshed/dress-handsup-drape.obj",
+	};
 
 Simulation::FabricConfiguration OptimizationTaskConfigurations::agenthat579 = {
 	.clothDimX = 6,

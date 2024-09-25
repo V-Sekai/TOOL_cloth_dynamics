@@ -1590,48 +1590,8 @@ Simulation::stepBackward(Simulation::BackwardTaskInformation &taskInfo,
 			int MAX_ITER_NUM = 400;
 			u_star_prev.setZero();
 			timeSteptimer.toc();
-
-			if (backwardGradientForceDirectSolver) {
-				u_star = solveDirect(dL_dxnew, t_2, dproj_dxnew_t, currentSysMat,
-						dr_df_plusI_t, dr_df_t);
-			} else {
-				timeSteptimer.tic("solveIterative");
-				for (int iterIdx = 0; iterIdx < MAX_ITER_NUM; iterIdx++) {
-					// step1: dl/dx add dL/dxnew * dxnew/dx
-					VecXd dr_df_t_x_u_star_prev = dr_df_t * u_star_prev;
-
-					VecXd deltaU =
-							t_2 * dproj_dxnew_t *
-									(currentSysMat.A * (dr_df_t_x_u_star_prev + u_star_prev)) -
-							currentSysMat.C_t * dr_df_t_x_u_star_prev;
-					VecXd rhs = dL_dxnew + deltaU;
-					u_star = currentSysMat.solver.solve(rhs);
-					bool converged = (std::abs((u_star - u_star_prev).norm() /
-											 (particles.size() * 1.0))) <
-							backwardConvergenceThreshold;
-					bool isLastIter = (iterIdx + 1 == MAX_ITER_NUM);
-					if (converged || isLastIter) {
-						timeSteptimer.toc(); // solveIterative
-						ret.backwardIters = iterIdx + 1;
-						ret.backwardTotalIters =
-								ret.backwardIters + gradient_new.backwardTotalIters;
-						ret.convergedAccum = gradient_new.convergedAccum;
-						if (converged) {
-							ret.converged = true;
-							ret.convergedAccum++;
-						} else {
-							ret.converged = false;
-							timeSteptimer.toc();
-							// direct solve
-							u_star = solveDirect(dL_dxnew, t_2, dproj_dxnew_t, currentSysMat,
-									dr_df_plusI_t, dr_df_t);
-						}
-						break;
-					}
-
-					u_star_prev = u_star;
-				}
-			}
+			u_star = solveDirect(dL_dxnew, t_2, dproj_dxnew_t, currentSysMat,
+					dr_df_plusI_t, dr_df_t);
 		}
 
 		// step2: red
