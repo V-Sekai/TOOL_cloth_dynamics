@@ -254,7 +254,7 @@ Simulation::SceneConfiguration
 			.camPos = Vec3d(-11.67, 20.40, -11.67),
 			.camFocusPointType = CameraFocusPointType::PRIM0CENTER,
 			.sceneBbox = AABB(Vec3d(-7, -7, -7), Vec3d(7, 7, 7)),
-			.timeStep = 1.0 / 120.0,
+			.timeStep = 1.0 / 180.0,
 			.stepNum = 350,
 			.forwardConvergenceThresh = 1e-9,
 			.backwardConvergenceThresh = 5e-4,
