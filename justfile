@@ -4,12 +4,12 @@ export EXTRACTED_FILE := "Godot_v4.3-stable_win64.exe"
 
 build:
     mkdir build -p
-    cd build && cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+    cd build && cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
     cmake --build build --parallel
 
 optimize demo randseed:
     @just build
-    ./build/DiffCloth -demo {{demo}} -mode optimize -seed {{randseed}}
+    samply record ./build/DiffCloth -demo {{demo}} -mode optimize -seed {{randseed}}
 
 clean:
     rm -rf build
