@@ -1026,7 +1026,7 @@ double Simulation::stepFixPoints(double t) {
 					fixedPointIdx++) {
 				Vec3d posLast = sysMat[currentSysmatId].fixedPoints[fixedPointIdx].pos;
 				rotationCenter[1] = posLast[1];
-				Eigen::AngleAxis rotMat(0.02, Vec3d(0, 1, 0));
+				Eigen::AngleAxis rotMat(0.01, Vec3d(0, 1, 0));
 				Vec3d relativePos = posLast - rotationCenter;
 				Vec3d relativePosRot = rotMat * relativePos;
 
