@@ -586,7 +586,8 @@ double OptimizeHelper::operator()(const VecXd &x, VecXd &grad) {
 	lastBacakwardOptRecord =
 			std::make_pair(system->forwardRecords, backwardRecords);
 	lastGuess = std::make_pair(param, backwardRecords[0].loss);
-	double loss = backwardRecords[0].loss;
+	double loss = backwardRecords[0].loss;	
+	system->exportStatistics((Demos)demoNum, statistics, taskInfo);
 	Simulation::BackwardInformation gradient = backwardRecords[0];
 	grad = gradientInfoToVecXd(gradient);
 	Simulation::backwrdInfoAndGradToString(taskInfo, backwardRecords[0]);
