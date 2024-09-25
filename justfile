@@ -1,5 +1,3 @@
-# Justfile for building and running quadwild on a Blender Monkey
-
 build:
     mkdir build -p
     cd build && cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
