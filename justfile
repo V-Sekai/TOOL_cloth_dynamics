@@ -11,6 +11,15 @@ optimize demo randseed:
     @just build
     ./build/DiffCloth -demo {{demo}} -mode optimize -seed {{randseed}}
 
+optimize-all randseed:
+    @just build
+    #!/usr/bin/env -S parallel --shebang-wrap /bin/bash --ungroup --jobs $(nproc)
+    echo "Starting optimization for T-shirt"; ./build/DiffCloth -demo tshirt -mode optimize -seed {{randseed}}; echo "T-shirt optimization done"
+    echo "Starting optimization for Sphere"; ./build/DiffCloth -demo sphere -mode optimize -seed {{randseed}}; echo "Sphere optimization done"
+    echo "Starting optimization for Hat"; ./build/DiffCloth -demo hat -mode optimize -seed {{randseed}}; echo "Hat optimization done"
+    echo "Starting optimization for Sock"; ./build/DiffCloth -demo sock -mode optimize -seed {{randseed}}; echo "Sock optimization done"
+    echo "Starting optimization for Dress"; ./build/DiffCloth -demo dress -mode optimize -seed {{randseed}}; echo "Dress optimization done"
+
 clean:
     rm -rf build
 

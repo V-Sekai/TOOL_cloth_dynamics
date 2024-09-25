@@ -95,7 +95,7 @@ void OptimizeHelper::setParameterBounds(
 	}
 
 	std::vector<std::pair<double, double>> stiffnessBounds = {
-		{ 0, 200 }, { 63, 10000 }, { 80, 1500 }, { 1e-7, 5 }
+		{ 0, 200 }, { 63, 10000 }, { 80, 1500 }, { 1e-7, 10 }
 	};
 
 	if (taskInfo.dL_dx0) {
