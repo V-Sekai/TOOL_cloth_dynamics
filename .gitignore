@@ -23,3 +23,5 @@ external/.DS_Store
 godot.exe
 
 .godot/
+
+profile.json
