@@ -473,7 +473,7 @@ public:
 	Timer timer;
 
 	Eigen::SimplicialLLT<SpMat> Msolver;
-	Eigen::SparseLU<SpMat> solverSparseLU;
+	Eigen::SparseQR<SpMat, Eigen::COLAMDOrdering<int>> solverSparseQR;
 
 	Simulation(Vec3d center) :
 			systemCenter(center),
@@ -1003,7 +1003,7 @@ private:
 			Eigen::SimplicialLLT<SpMat> &lltSolver,
 			const std::string &warning_msg);
 
-	SpMat factorizeDirectsolverSparseLU(const SpMat &A, Eigen::SparseLU<SpMat> &solverSparseLU, const std::string &warning_msg);
+	SpMat factorizeDirectSolverSparseQR(const SpMat &A, Eigen::SparseQR<SpMat, Eigen::COLAMDOrdering<int>> &qrSolver, const std::string &warning_msg);
 
 	std::chrono::steady_clock::time_point getTimeNow() {
 		return std::chrono::steady_clock::now();

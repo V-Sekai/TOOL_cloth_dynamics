@@ -1463,8 +1463,8 @@ VecXd Simulation::solveDirect(VecXd &dL_dxnew, double t_2, SpMat &dproj_dxnew_t,
 			currentSysMat.C_t * dr_df_t;
 
 	SpMat P_N_T = currentSysMat.P - delta_P_T;
-	factorizeDirectsolverSparseLU(P_N_T, solverSparseLU, "factorize SparseLU");
-	VecXd u_star = solverSparseLU.solve(dL_dxnew);
+	factorizeDirectSolverSparseQR(P_N_T, solverSparseQR, "factorize SparseQR");
+	VecXd u_star = solverSparseQR.solve(dL_dxnew);
 	timeSteptimer.toc();
 	return u_star;
 }
@@ -4575,26 +4575,26 @@ VecXd Simulation::getParticleNormals(std::vector<Triangle> mesh,
 	return normals;
 }
 
-SpMat Simulation::factorizeDirectsolverSparseLU(
-		const SpMat &A, Eigen::SparseLU<SpMat> &solverSparseLU,
+SpMat Simulation::factorizeDirectSolverSparseQR(
+		const SpMat &A, Eigen::SparseQR<SpMat, Eigen::COLAMDOrdering<int>> &qrSolver,
 		const std::string &warning_msg) {
-	solverSparseLU.compute(A);
+	qrSolver.compute(A);
 	SpMat Afixed = A;
 	double regularization = 1e-10;
 	bool success = true;
 	SpMat I = SpMat(A.rows(), A.cols());
 	I.setIdentity();
-	while (solverSparseLU.info() != Eigen::Success) {
+	while (qrSolver.info() != Eigen::Success) {
 		regularization *= 10;
 		Afixed = Afixed + regularization * I;
-		solverSparseLU.compute(Afixed);
-		success = solverSparseLU.info();
+		qrSolver.compute(Afixed);
+		success = qrSolver.info();
 		if (regularization > 100)
 			break;
 	}
 	if (!success) {
 		std::cout << "Warning: " << warning_msg << " adding " << regularization
-				  << " identites.(SparseLU solver)" << std::endl;
+				  << " identites.(qr solver)" << std::endl;
 	}
 
 	return Afixed;
