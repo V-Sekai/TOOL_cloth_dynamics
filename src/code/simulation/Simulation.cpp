@@ -1,3 +1,28 @@
+/*
+ * MIT License
+ *
+ * Copyright (c) 2024-present K. S. Ernest (Fire) Lee
+ * Copyright (c) 2022-2024 Yifei Li
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 //
 // Created by Yifei Li on 9/24/20.
 //
@@ -746,7 +771,7 @@ Simulation::calculatedr_df(const completeCollisionInfo &infos,
 			double rho = sceneConfig.fabric.density;
 			for (const std::vector<SelfCollisionInformation> &selfInfos :
 					infos.second) { // has to use second, because 1. layer matters 2.
-									// info.d and info.r is only updated in second
+				// info.d and info.r is only updated in second
 				layerCount++;
 				SpMat dr_df_last = dr_df;
 				TripleVector dr_df_delta;
@@ -3552,7 +3577,7 @@ void Simulation::resetSystemWithParams(
 	resetSystem();
 
 	if (taskConfiguration.dL_dx0) { // for rest shape param, set it after all
-									// resets have been finished
+		// resets have been finished
 		forwardRecords[0].x = param.x0;
 		for (Particle &p : particles) {
 			p.pos = param.x0.segment(p.idx * 3, 3);
@@ -4551,28 +4576,28 @@ VecXd Simulation::getParticleNormals(std::vector<Triangle> mesh,
 }
 
 SpMat Simulation::factorizeDirectSolverSparseQR(
-        const SpMat &A, Eigen::SparseQR<SpMat, Eigen::COLAMDOrdering<int>> &qrSolver,
-        const std::string &warning_msg) {
-    qrSolver.compute(A);
-    SpMat Afixed = A;
-    double regularization = 1e-10;
-    bool success = true;
-    SpMat I = SpMat(A.rows(), A.cols());
-    I.setIdentity();
-    while (qrSolver.info() != Eigen::Success) {
-        regularization *= 10;
-        Afixed = Afixed + regularization * I;
-        qrSolver.compute(Afixed);
-        success = qrSolver.info();
-        if (regularization > 100)
-            break;
-    }
-    if (!success) {
-        std::cout << "Warning: " << warning_msg << " adding " << regularization
-                  << " identites.(qr solver)" << std::endl;
-    }
+		const SpMat &A, Eigen::SparseQR<SpMat, Eigen::COLAMDOrdering<int>> &qrSolver,
+		const std::string &warning_msg) {
+	qrSolver.compute(A);
+	SpMat Afixed = A;
+	double regularization = 1e-10;
+	bool success = true;
+	SpMat I = SpMat(A.rows(), A.cols());
+	I.setIdentity();
+	while (qrSolver.info() != Eigen::Success) {
+		regularization *= 10;
+		Afixed = Afixed + regularization * I;
+		qrSolver.compute(Afixed);
+		success = qrSolver.info();
+		if (regularization > 100)
+			break;
+	}
+	if (!success) {
+		std::cout << "Warning: " << warning_msg << " adding " << regularization
+				  << " identites.(qr solver)" << std::endl;
+	}
 
-    return Afixed;
+	return Afixed;
 }
 
 SpMat Simulation::factorizeDirectSolverLLT(

@@ -1,3 +1,28 @@
+/*
+ * MIT License
+ *
+ * Copyright (c) 2024-present K. S. Ernest (Fire) Lee
+ * Copyright (c) 2022-2024 Yifei Li
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 //
 // Created by Yifei Li on 9/24/20.
 //
@@ -354,7 +379,7 @@ public:
 	SpMat dproj_dxnew, dproj_dxnew_t;
 
 	struct SystemMatrix { // All these matrices are constraint weight dependent,
-						  // so if constraint weight change, these matrices change
+		// so if constraint weight change, these matrices change
 		// Additionally, in our simulation sometimes the constraints need to be
 		// changed because of change of attachment constraints
 		SpMat P;
@@ -616,8 +641,8 @@ public:
 			for (Primitive *p : primitives) {
 				p->forwardRecords.emplace_back(p->forwardRecords[0]);
 				if (p->isPrimitiveCollection) { // TODO: this is a hacky way to reset
-												// primitive trees with <= 2 levels;
-												// should be changed to recursion
+					// primitive trees with <= 2 levels;
+					// should be changed to recursion
 					for (Primitive *pChild : p->primitives) {
 						pChild->forwardRecords.emplace_back(pChild->forwardRecords[0]);
 					}
