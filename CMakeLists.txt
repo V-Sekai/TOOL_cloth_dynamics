@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(DiffCloth)
+project(tool_cloth_dynamics)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -33,7 +33,7 @@ endif()
 
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 set(CMAKE_CXX_STANDARD 20)
-set(EXECUTABLE_NAME DiffCloth)
+set(EXECUTABLE_NAME tool_cloth_dynamics)
 set(EXTERNAL_ROOT ${PROJECT_SOURCE_DIR}/external)
 set(LIB dependencies/lib)
 
