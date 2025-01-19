@@ -1,0 +1,7 @@
+
+default:
+    #!/bin/bash
+    eval "$(micromamba shell hook --shell zsh)"
+    micromamba activate cloth-dynamics
+    micromamba install -y -c conda-forge trimesh numpy gltflib
+    python3 animate.py
