@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.5)
 project(tool_cloth_dynamics)
 
 if(NOT CMAKE_BUILD_TYPE)

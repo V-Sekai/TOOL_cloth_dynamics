@@ -1,5 +1,5 @@
 # CMake entry point.
-cmake_minimum_required(VERSION 3.1.0)
+cmake_minimum_required(VERSION 3.5)
 
 # Do not want to generate zeor_check because they cause messy folders in
 # visual studio 2017.

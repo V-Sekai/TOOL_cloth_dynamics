@@ -7,7 +7,7 @@ export CPPFLAGS :="-I/opt/homebrew/opt/libomp/include"
 build:
     #!/bin/bash
     if [[ `uname` == "Darwin" ]]; then
-        brew install libomp
+        brew install libomp ninja
     fi
     mkdir build -p
     cd build && cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
