@@ -5,7 +5,7 @@ export LDFLAGS :="-L/opt/homebrew/opt/libomp/lib"
 export CPPFLAGS :="-I/opt/homebrew/opt/libomp/include"
 
 build:
-    #!/bin/bash
+    #!/usr/bin/env bash
     if [[ `uname` == "Darwin" ]]; then
         brew install libomp ninja
     fi
@@ -19,7 +19,7 @@ optimize demo randseed:
 
 optimize-all randseed:
     @just build
-    #!/usr/bin/env -S parallel --shebang-wrap /bin/bash --ungroup --jobs $(nproc)
+    #!/usr/bin/env -S parallel --shebang-wrap /usr/bin/env bash --ungroup --jobs $(nproc)
     echo "Starting optimization for T-shirt"; ./build/DiffCloth -demo tshirt -mode optimize -seed {{randseed}}; echo "T-shirt optimization done"
     echo "Starting optimization for Sphere"; ./build/DiffCloth -demo sphere -mode optimize -seed {{randseed}}; echo "Sphere optimization done"
     echo "Starting optimization for Hat"; ./build/DiffCloth -demo hat -mode optimize -seed {{randseed}}; echo "Hat optimization done"
