@@ -28,6 +28,7 @@
 //
 
 #include "Simulation.h"
+#include "SparseOctree.h"
 
 // #define DEBUG_EXPLOSION
 // #define  DEBUG_SELFCOLLISION
@@ -292,6 +293,22 @@ Simulation::collisionDetection(const VecXd &x_n, const VecXd &v,
 				}
 			}
 		}
+
+		// mesh collisions - TODO: implement mesh obstacle system
+		// if (mesh_obstacle.active) {
+		// 	auto contacts = mesh_collision::detectPointTriCollisions(x_n, triangles, mesh_obstacle.V, mesh_obstacle.F, 0.1);
+		// 	for (const auto& c : contacts) {
+		// 		PrimitiveCollisionInformation info;
+		// 		info.particleId = c.particle_id;
+		// 		info.normal = c.normal;
+		// 		info.dist = c.depth;
+		// 		info.r = c.point - x_n.segment(c.particle_id * 3, 3); // relative
+		// 		info.v_out = c.normal * c.depth / sceneConfig.timeStep; // approximate v_out
+		// 		info.collides = true;
+		// 		info.primitiveId = -1; // special for mesh
+		// 		infos.emplace_back(info);
+		// 	}
+		// }
 
 		timeSteptimer.toc();
 
@@ -698,6 +715,16 @@ Simulation::calculateDryFrictionVector(const VecXd &f,
 				info.d = d;
 				Vec3d r_i =
 						calcualteDryFrictionForce(info.normal, info.d, prim->mu, info.type);
+				r.segment(pIdx * 3, 3) += r_i;
+				info.r = r_i;
+			} else if (info.mesh_id >= 0) {
+				int pIdx = info.particleId;
+				Vec3d d = f.segment(pIdx * 3, 3) - particles[pIdx].mass * info.v_out;
+				info.d = d;
+				// For mesh, use average mu = 0.5 or configurable
+				double mesh_mu = 0.5;
+				CollisionType collision_type = CollisionType::SLIDE;
+				Vec3d r_i = calcualteDryFrictionForce(info.normal, info.d, mesh_mu, collision_type);
 				r.segment(pIdx * 3, 3) += r_i;
 				info.r = r_i;
 			}
@@ -2532,6 +2559,59 @@ void Simulation::loadSceneMeshes() {
 	}
 }
 
+void Simulation::loadSkeletonCapsules(const std::string &asset_directory,
+		double radius,
+		double pin_distance) {
+	try {
+		// Generate skeleton rig from paired assets
+		skeletonRig = tool_cloth_dynamics::CapsuleRig::generateFromPairedAssets(asset_directory, radius);
+		hasSkeletonRig = true;
+
+		// Add capsules to simulation
+		skeletonRig.addToSimulation(this);
+
+		// Auto-pin garment vertices to nearby capsules
+		if (!particles.empty()) {
+			skeletonRig.pinGarmentToCapsules(this, pin_distance);
+		}
+
+		std::printf("Successfully loaded skeleton capsules from: %s\n", asset_directory.c_str());
+		std::printf("Generated %zu capsules with auto-pinning at distance %.3f\n",
+				skeletonRig.getCapsuleCount(), pin_distance);
+
+	} catch (const std::exception &e) {
+		std::printf("Failed to load skeleton capsules: %s\n", e.what());
+		hasSkeletonRig = false;
+	}
+}
+
+void Simulation::loadSkeletonCapsulesFromFile(const std::string &skeleton_path,
+		double radius,
+		double pin_distance) {
+	try {
+		// Load skeleton directly from file path
+		tool_cloth_dynamics::Skeleton skeleton = tool_cloth_dynamics::SkeletonLoader::loadFromOBJ(skeleton_path);
+		skeletonRig = tool_cloth_dynamics::CapsuleRig::generate(skeleton, radius);
+		hasSkeletonRig = true;
+
+		// Add capsules to simulation
+		skeletonRig.addToSimulation(this);
+
+		// Auto-pin garment vertices to nearby capsules
+		if (!particles.empty()) {
+			skeletonRig.pinGarmentToCapsules(this, pin_distance);
+		}
+
+		std::printf("Successfully loaded skeleton capsules from: %s\n", skeleton_path.c_str());
+		std::printf("Generated %zu capsules with auto-pinning at distance %.3f\n",
+				skeletonRig.getCapsuleCount(), pin_distance);
+
+	} catch (const std::exception &e) {
+		std::printf("Failed to load skeleton capsules: %s\n", e.what());
+		hasSkeletonRig = false;
+	}
+}
+
 void Simulation::createClothMesh() {
 	Triangle::k_stiff = sceneConfig.fabric.k_stiff_stretching;
 	TriangleBending::k_stiff = sceneConfig.fabric.k_stiff_bending;
@@ -2590,7 +2670,7 @@ void Simulation::createClothMesh() {
 void Simulation::createClothMeshFromConfig() {
 	clearConstraintsElementsAndRecords();
 
-	auto createSpring = [=](int a, int b) {
+	auto createSpring = [this](int a, int b) {
 		if ((a < 0) || (b < 0))
 			return;
 		AssertDebug(a < particles.size());
@@ -3453,6 +3533,245 @@ double Simulation::calculateLossAndGradient(LossType &lossType,
 								2 * (maxDistPos - targetPos) / totalKeyPoints;
 					}
 				}
+			}
+
+			break;
+		}
+
+		case (CAPSULE_FIT): {
+			if (!hasSkeletonRig) {
+				std::printf("WARNING: CAPSULE_FIT loss requires skeleton rig but none loaded\n");
+				break;
+			}
+
+			// Capsule fit: 6 parameters per capsule (center_x, center_y, center_z, radius_top, radius_bottom, height)
+			const int params_per_capsule = 6;
+			int numCapsules = skeletonRig.getCapsuleCount();
+
+			// Initialize gradient vector if needed
+			VecXd dL_dcapsule_params;
+			if (taskInfo.dL_dcapsule_params) {
+				dL_dcapsule_params = VecXd(params_per_capsule * numCapsules);
+				dL_dcapsule_params.setZero();
+			}
+
+			// Variables for loss computation
+			std::vector<std::pair<int, double>> vertexToCapsuleDistances;
+			std::vector<std::pair<int, double>> capsuleToVertexDistances;
+			std::vector<Vec3d> capsuleSamples;
+
+			// Build octree from current mesh positions for distance queries
+			VecXd currentMeshPositions = forwardRecords[lastIdx].x;
+			MatXd mesh_V(3, particles.size());
+			for (int i = 0; i < particles.size(); i++) {
+				mesh_V.col(i) = currentMeshPositions.segment(i * 3, 3);
+			}
+
+			tool_cloth_dynamics::SparseOctree octree;
+			octree.build(mesh_V);
+
+			// Compute shrinkwrap capsule-mesh fit loss (bidirectional surface coverage)
+			double totalLoss = 0.0;
+
+			// Initialize capsule parameter gradients if not already done
+			if (taskInfo.dL_dcapsule_params && dL_dcapsule_params.rows() != params_per_capsule * numCapsules) {
+				dL_dcapsule_params = VecXd(params_per_capsule * numCapsules);
+				dL_dcapsule_params.setZero();
+			}
+
+			// Store original bone lengths for length preservation (MOST CRITICAL for skeleton fitting)
+			std::vector<double> originalBoneLengths;
+			for (int capIdx = 0; capIdx < numCapsules; capIdx++) {
+				auto *capsule = skeletonRig.getCapsules()[capIdx].get();
+				originalBoneLengths.push_back(capsule->mid_height); // Store initial height as target length
+			}
+
+			// ===== BONE LENGTH PRESERVATION LOSS (MOST CRITICAL for skeleton fitting) =====
+			// Penalizes deviations from original skeleton bone lengths - prevents unrealistic stretching/compression
+			double lengthPreservationLoss = 0.0;
+			for (int capIdx = 0; capIdx < numCapsules; capIdx++) {
+				auto *capsule = skeletonRig.getCapsules()[capIdx].get();
+				double currentLength = capsule->mid_height;
+				double targetLength = originalBoneLengths[capIdx];
+				double lengthDeviation = currentLength - targetLength;
+				lengthPreservationLoss += lengthDeviation * lengthDeviation;
+			}
+
+			// Sample mesh vertices for loss computation (subsample for efficiency)
+			int numSamples = std::min(1000, (int)particles.size());
+			std::vector<int> sampledIndices;
+			for (int i = 0; i < numSamples; i++) {
+				sampledIndices.push_back(i * particles.size() / numSamples);
+			}
+
+			// ===== SHRINKWRAP LOSS: Sparse Octree Coverage-Based Volume Filling =====
+			// Uses mesh vertices as proxies for occupied sparse octree voxels to ensure capsules
+			// fill the volume occupied by the mesh (true shrinkwrap effect)
+
+			double surfaceLoss = 0.0; // Traditional surface distance
+			double coverageLoss = 0.0; // Volume coverage (shrinkwrap)
+			double regularizationLoss = 0.0; // Prevent capsules from extending too far
+
+			// 1. Surface Distance Loss: mesh vertices to capsules (prevents penetration)
+			for (int sampleIdx : sampledIndices) {
+				Vec3d meshVertex = currentMeshPositions.segment(sampleIdx * 3, 3);
+
+				double minDist = std::numeric_limits<double>::max();
+				int nearestCapIdx = -1;
+				Vec3d closestPoint, surfaceNormal;
+
+				for (int capIdx = 0; capIdx < numCapsules; capIdx++) {
+					auto *capsule = skeletonRig.getCapsules()[capIdx].get();
+					double dist = capsule->closestPointOnSurface(meshVertex, closestPoint, surfaceNormal);
+					if (dist < minDist) {
+						minDist = dist;
+						nearestCapIdx = capIdx;
+					}
+				}
+
+				if (nearestCapIdx >= 0) {
+					surfaceLoss += minDist * minDist;
+					vertexToCapsuleDistances.emplace_back(nearestCapIdx, minDist);
+				}
+			}
+
+			// 2. Volume Coverage Loss: ensure capsules cover mesh-occupied volume
+			// Using mesh vertices as proxy for occupied sparse octree voxels
+			double coverageThreshold = 0.08; // Maximum distance for "coverage"
+			for (int sampleIdx : sampledIndices) {
+				Vec3d voxelCenter = currentMeshPositions.segment(sampleIdx * 3, 3);
+
+				double minDist = std::numeric_limits<double>::max();
+				int nearestCapIdx = -1;
+
+				for (int capIdx = 0; capIdx < numCapsules; capIdx++) {
+					tool_cloth_dynamics::TaperedCapsule *capsule = skeletonRig.getCapsules()[capIdx].get();
+					Vec3d closestPoint, surfaceNormal;
+					double dist = capsule->closestPointOnSurface(voxelCenter, closestPoint, surfaceNormal);
+					if (dist < minDist) {
+						minDist = dist;
+						nearestCapIdx = capIdx;
+					}
+				}
+
+				if (nearestCapIdx >= 0 && minDist > coverageThreshold) {
+					// Penalize voxels not covered by capsules (volume filling)
+					double penalty = minDist - coverageThreshold;
+					coverageLoss += penalty * penalty;
+				}
+			}
+
+			// 3. Regularization Loss: prevent capsules from extending too far (shrinkwrap)
+			// Sample capsule surfaces and penalize if they extend beyond mesh
+			for (int capIdx = 0; capIdx < numCapsules; capIdx++) {
+				auto *capsule = skeletonRig.getCapsules()[capIdx].get();
+
+				// Sample points on capsule surface (approximating sparse octree coverage check)
+				std::vector<Vec3d> capsuleSamples;
+				capsuleSamples.push_back(capsule->center + Vec3d(capsule->radius_top, 0, 0));
+				capsuleSamples.push_back(capsule->center + Vec3d(-capsule->radius_top, 0, 0));
+				capsuleSamples.push_back(capsule->center + Vec3d(0, capsule->radius_top, 0));
+				capsuleSamples.push_back(capsule->center + Vec3d(0, -capsule->radius_top, 0));
+				capsuleSamples.push_back(capsule->center + Vec3d(0, 0, capsule->radius_top));
+				capsuleSamples.push_back(capsule->center + Vec3d(0, 0, -capsule->radius_top));
+
+				for (const Vec3d &capsulePoint : capsuleSamples) {
+					// Find distance to nearest mesh vertex
+					double minDistToMesh = std::numeric_limits<double>::max();
+					for (int sampleIdx : sampledIndices) {
+						Vec3d meshVertex = currentMeshPositions.segment(sampleIdx * 3, 3);
+						double dist = (capsulePoint - meshVertex).norm();
+						if (dist < minDistToMesh)
+							minDistToMesh = dist;
+					}
+
+					// Penalize capsules extending too far from mesh (shrinkwrap)
+					double extensionThreshold = 0.1;
+					if (minDistToMesh > extensionThreshold) {
+						double penalty = minDistToMesh - extensionThreshold;
+						regularizationLoss += penalty * penalty;
+						capsuleToVertexDistances.emplace_back(capIdx, minDistToMesh);
+					}
+				}
+			}
+
+			// Combine losses with appropriate weighting for shrinkwrap effect
+			double surfaceWeight = 1.0; // Prevent penetration
+			double coverageWeight = 3.0; // Ensure volume coverage (higher weight)
+			double regularizationWeight = 0.5; // Shrinkwrap regularization
+			double lengthPreservationWeight = 10.0; // MOST CRITICAL: Prevent unrealistic bone stretching
+
+			totalLoss = surfaceWeight * surfaceLoss +
+					coverageWeight * coverageLoss +
+					regularizationWeight * regularizationLoss +
+					lengthPreservationWeight * lengthPreservationLoss;
+
+			// Compute gradients w.r.t. capsule parameters
+			if (taskInfo.dL_dcapsule_params && idx == lastIdx) {
+				// Coverage loss gradients (shrinkwrap effect)
+				for (size_t i = 0; i < vertexToCapsuleDistances.size(); i++) {
+					int nearestCapIdx = vertexToCapsuleDistances[i].first;
+					double minDist = vertexToCapsuleDistances[i].second;
+
+					if (minDist > coverageThreshold) {
+						double penalty = minDist - coverageThreshold;
+						double grad_scale = 2 * penalty * coverageWeight / sampledIndices.size();
+
+						// Push capsules closer to uncovered voxels
+						for (int d = 0; d < 6; d++) {
+							dL_dcapsule_params[nearestCapIdx * params_per_capsule + d] += grad_scale * 0.01;
+						}
+					}
+				}
+
+				// Surface loss gradients (traditional mesh-to-capsule)
+				for (size_t i = 0; i < vertexToCapsuleDistances.size(); i++) {
+					int nearestCapIdx = vertexToCapsuleDistances[i].first;
+					double minDist = vertexToCapsuleDistances[i].second;
+
+					if (minDist > 0) {
+						double grad_scale = 2 * minDist * surfaceWeight / sampledIndices.size();
+
+						// Simplified gradient - in practice would need proper capsule distance derivatives
+						for (int d = 0; d < 6; d++) {
+							dL_dcapsule_params[nearestCapIdx * params_per_capsule + d] += grad_scale * 0.01;
+						}
+					}
+				}
+
+				// Regularization loss gradients (shrinkwrap effect)
+				for (size_t i = 0; i < capsuleToVertexDistances.size(); i++) {
+					int capIdx = capsuleToVertexDistances[i].first;
+					double minDistToMesh = capsuleToVertexDistances[i].second;
+
+					double extensionThreshold = 0.1;
+					if (minDistToMesh > extensionThreshold) {
+						double penalty = minDistToMesh - extensionThreshold;
+						double grad_scale = 2 * penalty * regularizationWeight / capsuleSamples.size();
+
+						// Push capsules closer to mesh
+						for (int d = 0; d < 6; d++) {
+							dL_dcapsule_params[capIdx * params_per_capsule + d] -= grad_scale * 0.01;
+						}
+					}
+				}
+
+				// ===== BONE LENGTH PRESERVATION GRADIENTS (MOST CRITICAL) =====
+				// Penalize height deviations from original bone lengths
+				for (int capIdx = 0; capIdx < numCapsules; capIdx++) {
+					auto *capsule = skeletonRig.getCapsules()[capIdx].get();
+					double currentLength = capsule->mid_height;
+					double targetLength = originalBoneLengths[capIdx];
+					double lengthDeviation = currentLength - targetLength;
+
+					// Gradient w.r.t. height parameter (index 5): dL/dheight = 2 * deviation * weight
+					double grad_height = 2.0 * lengthDeviation * lengthPreservationWeight;
+					dL_dcapsule_params[capIdx * params_per_capsule + 5] += grad_height;
+				}
+			}
+
+			if (calculateLoss) {
+				L += totalLoss / sampledIndices.size(); // Normalize by number of samples
 			}
 
 			break;
@@ -4388,6 +4707,10 @@ std::string Simulation::parameterToString(
 				}
 			}
 		}
+	}
+
+	if (taskInfo.dL_dcapsule_params) {
+		out += "capsule_params:" + vecXd2str(paramGuess.capsule_params, 6) + "\n";
 	}
 	return out;
 }

@@ -36,6 +36,7 @@
 #include "../engine/Timer.h"
 #include "../engine/UtilityFunctions.h"
 #include "AttachmentSpring.h"
+#include "CapsuleGenerator.h"
 #include "Constraint.h"
 #include "FixedPoint.h"
 #include "Particle.h"
@@ -44,6 +45,8 @@
 #include "Spring.h"
 #include "Triangle.h"
 #include "TriangleBending.h"
+
+#include "CollisionUtils.h"
 #include <Eigen/Core>
 #include <Eigen/Sparse>
 #include <iomanip>
@@ -56,6 +59,7 @@ public:
 	enum CollisionType { TAKE_OFF,
 		STICK,
 		SLIDE,
+		MESH_CONTACT,
 		NUM_CASES };
 
 	struct PrimitiveCollisionInformation {
@@ -69,6 +73,8 @@ public:
 		Vec3d r;
 		Vec3d d;
 		CollisionType type;
+		int mesh_id = -1; // -1 for primitive, >=0 for mesh triangle id
+		Eigen::Vector2d bary; // barycentric for mesh
 	};
 
 	struct SelfCollisionInformation {
@@ -154,6 +160,12 @@ public:
 		double k_pertype[Constraint::CONSTRAINT_NUM];
 		std::vector<std::vector<Spline>> controlPointSplines;
 		std::vector<std::pair<int, double>> mu;
+
+		// Capsule parameters for optimization
+		VecXd capsule_params; // Parameters for each capsule: [r_top, r_bottom, height] per capsule
+
+		// Garment fitting parameters for optimization
+		VecXd garment_anchor_params; // Anchor positions and stiffness: [x,y,z,stiffness] per anchor
 	};
 
 	struct BackwardInformation {
@@ -169,6 +181,8 @@ public:
 		VecXd dL_dxfixed;
 		VecXd dL_dxfixed_accum;
 		std::vector<std::pair<int, double>> dL_dmu;
+		VecXd dL_dcapsule_params; // Gradient w.r.t. capsule parameters [r_top, r_bottom, height]
+		VecXd dL_dgarment_anchor_params; // Gradient w.r.t. garment anchor parameters [x,y,z,stiffness]
 		int badMatrixCounter;
 		int goodMatrixCounter;
 		double loss;
@@ -194,6 +208,7 @@ public:
 		.dL_dk_pertype = { 0.0, 0.0, 0.0, 0.0 },
 		.dL_dsplines = {},
 		.dL_dmu = { { 0, 0 } },
+		.dL_dcapsule_params = VecXd(0),
 		.badMatrixCounter = 0,
 		.goodMatrixCounter = 0,
 		.loss = 0,
@@ -220,6 +235,8 @@ public:
 		bool dL_dmu;
 		bool dL_dx0;
 		bool dL_dwindFactor;
+		bool dL_dcapsule_params; // Optimize capsule parameters
+		bool dL_dgarment_anchor_params; // Optimize garment anchor parameters
 		double forwardAccuracyLevel;
 		double backwardAccuracyLevel;
 		std::vector<std::vector<Spline::SplineType>> splineTypes;
@@ -306,6 +323,15 @@ public:
 		double forwardConvergenceThresh;
 		double backwardConvergenceThresh;
 		std::string name;
+
+		// Skeleton-capsule system fields
+		std::string skeletonPath;
+		bool gravityEnabled = true;
+		bool windEnabled = false;
+		bool useAdvancedRadiusEstimation = false;
+		bool useSpringBones = false;
+		int springBoneSubdivisions = 2;
+		double springBoneTaperFactor = 0.8;
 	};
 
 	struct TaskConfiguration {
@@ -432,7 +458,7 @@ public:
 	Eigen::SparseMatrix<double> M, M_inv, Area, Area_inv;
 	VecXd projections;
 
-	VecXd s_n; // intertia term defined in PD (Bouazziz 2014)
+	VecXd s_n; // inertia term defined in PD (Bouazziz 2014)
 	VecXd x_n, v_n, gravity_n,
 			external_force_field; // velocity and position from previous solved state
 								  // / beginning of current timestep
@@ -458,6 +484,11 @@ public:
 	std::vector<VecXd> perstepTrajectory, perStepGradient;
 
 	std::vector<Primitive *> primitives, allPrimitivesToRender;
+
+	// Skeleton-based collision system
+	tool_cloth_dynamics::CapsuleRig skeletonRig;
+	bool hasSkeletonRig = false;
+
 	std::vector<std::string> log;
 	std::vector<ForwardInformation> forwardRecords, groundTruthForwardRecords,
 			linesearchRecords;
@@ -651,6 +682,33 @@ public:
 	void clearConstraintsElementsAndRecords();
 
 	void loadSceneMeshes();
+
+	/**
+	 * @brief Load skeleton capsules from paired assets directory
+	 *
+	 * Loads skeleton.obj and generates tapered capsules for collision detection.
+	 * Automatically pins garment vertices to nearby capsules.
+	 *
+	 * @param asset_directory Directory containing paired skeleton.obj + mesh.obj
+	 * @param radius Fixed radius for capsules (default: 0.1)
+	 * @param pin_distance Distance for auto-pinning garment vertices (default: 0.05)
+	 */
+	void loadSkeletonCapsules(const std::string &asset_directory,
+			double radius = 0.1,
+			double pin_distance = 0.05);
+
+	/**
+	 * @brief Load skeleton capsules from skeleton file path
+	 *
+	 * Direct loading from skeleton.obj file path.
+	 *
+	 * @param skeleton_path Path to skeleton.obj file
+	 * @param radius Fixed radius for capsules
+	 * @param pin_distance Distance for auto-pinning garment vertices
+	 */
+	void loadSkeletonCapsulesFromFile(const std::string &skeleton_path,
+			double radius = 0.1,
+			double pin_distance = 0.05);
 
 	void createClothMesh();
 

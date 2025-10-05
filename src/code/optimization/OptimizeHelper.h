@@ -47,6 +47,7 @@ public:
 		int offset_dL_dx0;
 		int offset_dL_k[Constraint::CONSTRAINT_NUM];
 		int offset_dL_dconstantForceField;
+		int offset_dL_capsule_params;
 		std::vector<int> offset_dL_dmu = {};
 	};
 

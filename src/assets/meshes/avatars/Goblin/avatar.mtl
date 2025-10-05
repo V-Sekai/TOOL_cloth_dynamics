@@ -1,0 +1,14 @@
+# Blender 4.2.0 MTL File: 'None'
+# www.blender.org
+
+newmtl Goblin_DH_RigSetup:Goblin19
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd TXT_LC_Goblin_ALB.png
+map_Ns TXT_LC_Goblin_RGH.png
+map_refl TXT_LC_Goblin_MET.png
+map_Bump TXT_LC_Goblin_NOR.png

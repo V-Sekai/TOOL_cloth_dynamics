@@ -1,0 +1,20 @@
+{
+  "name": "TOOL_cloth_dynamics Ubuntu Dev Container",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "twxs.cmake",
+        "saoudrizwan.claude-dev",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  },
+  "forwardPorts": [],
+  "postCreateCommand": "echo 'Dev container ready!'",
+  "remoteUser": "root"
+}

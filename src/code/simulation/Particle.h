@@ -56,7 +56,7 @@ public:
 	void clearNormal() { normal = Vec3d(0.0, 0.0, 0.0); }
 
 	void printState() const {
-		std::printf("Paricle %d x=(%.2f,%.2f,%.2f) v=(%.9f,%.9f,%.9f)\n", idx,
+		std::printf("Particle %d x=(%.2f,%.2f,%.2f) v=(%.9f,%.9f,%.9f)\n", idx,
 				pos[0], pos[1], pos[2], velocity[0], velocity[1], velocity[2]);
 	}
 };

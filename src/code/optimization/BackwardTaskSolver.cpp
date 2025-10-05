@@ -28,6 +28,7 @@
 // Email: liyifei@csail.mit.edu
 //
 #include "BackwardTaskSolver.h"
+#include "../simulation/GarmentFitter.h"
 #include <LBFGSB.h>
 #include <LBFGSpp/Param.h>
 
@@ -128,6 +129,14 @@ OptimizeHelper BackwardTaskSolver::getOptimizeHelper(Simulation *system,
 	if (demoNum != Demos::DEMO_WIND_SIM2REAL) {
 		system->createClothMesh();
 		system->initScene();
+
+		// Integrate garment fitting for wear demos
+		if (demoNum == Demos::DEMO_WEAR_HAT || demoNum == Demos::DEMO_WEAR_SOCK) {
+			std::cout << "Initializing garment fitting for demo..." << std::endl;
+
+			// Fit garment to rig using bone-based anchoring
+			tool_cloth_dynamics::GarmentFitter::fitGarmentToRig(system, system->skeletonRig);
+		}
 	}
 
 	setInitialConditions(demoNum, system, paramGroundtruth, taskInfo);

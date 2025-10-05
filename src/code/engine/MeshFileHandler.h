@@ -32,6 +32,7 @@
 #define OMEGAENGINE_MESHFILEHANDLER_H
 
 #include "../simulation/Triangle.h"
+#include "Constants.h"
 #include "Macros.h"
 #include "UtilityFunctions.h"
 #include <iomanip>

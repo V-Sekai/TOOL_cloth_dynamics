@@ -71,6 +71,7 @@ typedef Eigen::Vector3i Vec3i;
 typedef Eigen::Vector2d Vec2d;
 typedef Eigen::Vector3d Vec3d;
 typedef Eigen::Vector4d Vec4d;
+typedef Eigen::Quaterniond Quat;
 
 typedef Eigen::Matrix<double, 5, 1> Vec5d;
 typedef Eigen::Matrix<double, 6, 1> Vec6d;

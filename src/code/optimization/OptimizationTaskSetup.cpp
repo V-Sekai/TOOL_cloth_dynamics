@@ -243,6 +243,25 @@ void BackwardTaskSolver::setInitialConditions(
 			system->setWindAncCollision(false, true, true);
 			taskInfo.dL_dcontrolPoints = true;
 			resetSplineConfigsForControlTasks(demoNum, system, paramGroundtruth);
+
+			// Enable garment fitting parameter optimization
+			taskInfo.dL_dgarment_anchor_params = true;
+
+			// Initialize garment anchor parameters with flexible size
+			// The actual number of anchors will be determined by mesh analysis
+			// Use a reasonable default size that can accommodate various garment types
+			const int max_expected_anchors = 8; // Allow up to 8 anchors
+			const int params_per_anchor = 4; // x, y, z, stiffness
+			paramGroundtruth.garment_anchor_params = VecXd(max_expected_anchors * params_per_anchor);
+
+			// Initialize with neutral values - actual anchor positions will be
+			// determined by mesh analysis during fitting
+			paramGroundtruth.garment_anchor_params.setZero();
+			// Set default stiffness values (0.5 for all anchors)
+			for (int i = 3; i < paramGroundtruth.garment_anchor_params.size(); i += 4) {
+				paramGroundtruth.garment_anchor_params[i] = 0.5;
+			}
+
 			break;
 		}
 

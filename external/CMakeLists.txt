@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD 11)
 
 set(EXTERNAL_HEADER
         "${CMAKE_CURRENT_LIST_DIR}/eigen/"
+        "${CMAKE_CURRENT_LIST_DIR}/cgltf/"
         )
 
 include_directories(${EXTERNAL_HEADER})
-

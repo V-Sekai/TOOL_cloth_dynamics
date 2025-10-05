@@ -254,7 +254,6 @@ int main(int argc, char ** argv)
 
   // check the parallel product is correct
   #if defined EIGEN_HAS_OPENMP
-  Eigen::initParallel();
   int procs = omp_get_max_threads();
   if(procs>1)
   {

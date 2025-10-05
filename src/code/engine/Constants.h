@@ -42,6 +42,7 @@ enum LossType {
 	MATCH_TRAJECTORY_MAX,
 	MATCH_VELOCITY,
 	DRESS_ANGLE,
+	CAPSULE_FIT,
 
 };
 
@@ -94,12 +95,19 @@ enum Demos {
 	DEMO_SLOPE_PERF, // 5
 	DEMO_DRESS_TWIRL, // 6
 	DEMO_SPHERE_ROTATE, // 7
+	DEMO_SKIRT, // 8
 };
 
 static std::vector<std::string> DEMOS_STRINGS = std::vector<std::string>{
-	"WIND", "WIND_TSHIRT", "WIND_SIM2REAL", "HAT",
-	"SOCK", "DEMO_SLOPE_PERF", "DEMO_DRESS_TWIRL0.3",
-	"SPHERE", // 19
+	"WIND",
+	"WIND_TSHIRT",
+	"WIND_SIM2REAL",
+	"HAT",
+	"SOCK",
+	"DEMO_SLOPE_PERF",
+	"DEMO_DRESS_TWIRL0.3",
+	"SPHERE",
+	"SKIRT",
 };
 
 enum PrimitiveConfiguration {
@@ -110,7 +118,10 @@ enum PrimitiveConfiguration {
 	FOOT,
 	NONE,
 	Y0PLANE,
-	BIG_SPHERE
+	BIG_SPHERE,
+	TAPERED_CAPSULE,
+	SKELETON_CAPSULES = 100,
+	SKELETON_WITH_SPRING_BONES = 101
 };
 
 enum CameraFocusPointType { ORIGIN,
@@ -142,19 +153,21 @@ enum SceneConfigArray {
 	SCENE_DEMO_SLOE,
 	SCENE_DEMO_TSHIRT,
 	SCENE_DEMO_DRESS,
+	SCENE_DEMO_SKIRT,
 	SCENE_NONE
 };
 
 static std::vector<std::string> SCENE_CONFIG_STRINGS = std::vector<std::string>{
 	"WIND", "CONTINUOUS_NORMAL", "ROTATING_SPHERE",
 	"DEMO_HAT", "DEMO_SOCK", "DEMO_SLOPE",
-	"DEMO_TSHIRT", "DEMO_DRESS", "NONE"
+	"DEMO_TSHIRT", "DEMO_DRESS", "SKIRT", "NONE"
 };
 
 static Vec3d COLOR_IBM_ULTRAMARINE40 =
 		Vec3d(100 / 255.0, 143 / 255.0, 255 / 255.0);
 static Vec3d COLOR_IBM_INDIGO50 = Vec3d(120 / 255.0, 94 / 255.0, 240 / 255.0);
 static Vec3d COLOR_IBM_MAGENTA50 = Vec3d(220 / 255.0, 38 / 255.0, 127 / 255.0);
+static Vec3d COLOR_IBM_BLUE60 = Vec3d(0 / 255.0, 67 / 255.0, 206 / 255.0);
 static Vec3d COLOR_IBM_ORANGE40 = Vec3d(254 / 255.0, 97 / 255.0, 0);
 static Vec3d COLOR_IBM_GOLD20 = Vec3d(1.0, 176 / 255.0, 0);
 

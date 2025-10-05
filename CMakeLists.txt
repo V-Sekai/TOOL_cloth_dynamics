@@ -7,30 +7,29 @@ endif()
 message(STATUS "set env var")
 
 # Properly setting environment variables for Apple Clang
-if (APPLE)
-    include_directories("/usr/local/include" "/usr/local/opt/llvm/include" "/opt/homebrew/opt/libomp/include")
-    link_directories("/usr/local/lib" "/usr/local/opt/llvm/lib" "/opt/homebrew/opt/libomp/lib")
-
-    set(ENV{CC} "/usr/local/opt/llvm/bin/clang")
-    set(ENV{CXX} "/usr/local/opt/llvm/bin/clang-omp++")
-    set(ENV{LDFLAGS} "-L/usr/local/opt/libomp/lib")
-    set(ENV{CPPFLAGS} "-I/usr/local/opt/libomp/include")
-
-    # Set OpenMP flags and libraries before find_package
-    set(OpenMP_C "${CMAKE_C_COMPILER}")
-    set(OpenMP_C_FLAGS "-Xclang -fopenmp -I/usr/local/Cellar/libomp/16.0.6/include")
-    set(OpenMP_C_LIB_NAMES "libomp")
-    set(OpenMP_libomp_LIBRARY "omp")
-
-    set(OpenMP_CXX "${CMAKE_CXX_COMPILER}")
-    set(OpenMP_CXX_FLAGS "-Xclang -fopenmp -I/usr/local/Cellar/libomp/16.0.6/include")
-    set(OpenMP_CXX_LIB_NAMES "libomp")
-    set(OpenMP_libomp_LIBRARY "omp")
-    set(OpenMP_omp_LIBRARY "/usr/local/opt/libomp/lib/libomp.dylib")
-
-    link_directories("/usr/local/Cellar/libomp/16.0.6/lib/")
-endif()
-
+#if (APPLE)
+#    include_directories("/usr/local/include" "/usr/local/opt/llvm/include" "/opt/homebrew/opt/libomp/include")
+#    link_directories("/usr/local/lib" "/usr/local/opt/llvm/lib" "/opt/homebrew/opt/libomp/lib")
+#
+#    set(ENV{CC} "/usr/local/opt/llvm/bin/clang")
+#    set(ENV{CXX} "/usr/local/opt/llvm/bin/clang-omp++")
+#    set(ENV{LDFLAGS} "-L/usr/local/opt/libomp/lib")
+#    set(ENV{CPPFLAGS} "-I/usr/local/opt/libomp/include")
+#
+#    # Set OpenMP flags and libraries before find_package
+#    set(OpenMP_C "${CMAKE_C_COMPILER}")
+#    set(OpenMP_C_FLAGS "-Xclang -fopenmp -I/usr/local/Cellar/libomp/16.0.6/include")
+#    set(OpenMP_C_LIB_NAMES "libomp")
+#    set(OpenMP_libomp_LIBRARY "omp")
+#
+#    set(OpenMP_CXX "${CMAKE_CXX_COMPILER}")
+#    set(OpenMP_CXX_FLAGS "-Xclang -fopenmp -I/usr/local/Cellar/libomp/16.0.6/include")
+#    set(OpenMP_CXX_LIB_NAMES "libomp")
+#    set(OpenMP_libomp_LIBRARY "omp")
+#    set(OpenMP_omp_LIBRARY "/usr/local/opt/libomp/lib/libomp.dylib")
+#
+#    link_directories("/usr/local/Cellar/libomp/16.0.6/lib/")
+#endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 set(CMAKE_CXX_STANDARD 20)
 set(EXECUTABLE_NAME tool_cloth_dynamics)

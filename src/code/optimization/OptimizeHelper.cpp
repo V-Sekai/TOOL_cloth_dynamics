@@ -58,6 +58,22 @@ OptimizeHelper::OptimizeHelper(Demos demoNum, Simulation *system,
 		}
 	}
 	param_guess.mu.resize(taskInfo.mu_primitives.size());
+	if (taskInfo.dL_dcapsule_params && system->hasSkeletonRig) {
+		// Capsule fit: 3 parameters per capsule (radius_top, radius_bottom, height)
+		int params_per_capsule = 3;
+		param_guess.capsule_params = VecXd(system->skeletonRig.getCapsuleCount() * params_per_capsule);
+		param_guess.capsule_params.setZero();
+
+		// Initialize with current capsule dimensions
+		for (size_t i = 0; i < system->skeletonRig.getCapsuleCount(); ++i) {
+			auto *capsule = system->skeletonRig.getCapsules()[i].get();
+
+			// Parameters: [r_top, r_bottom, height]
+			param_guess.capsule_params[i * params_per_capsule + 0] = capsule->radius_top;
+			param_guess.capsule_params[i * params_per_capsule + 1] = capsule->radius_bottom;
+			param_guess.capsule_params[i * params_per_capsule + 2] = capsule->mid_height;
+		}
+	}
 	hasGroundtruthParam = false;
 	totalParamNumber = 0;
 	totalSplineParamNumber = 0;
@@ -166,6 +182,30 @@ void OptimizeHelper::setParameterBounds(
 		}
 	}
 
+	if (taskInfo.dL_dcapsule_params) {
+		offset.offset_dL_capsule_params = totalParamNumber;
+		// Capsule fit: 3 parameters per capsule (radius_top, radius_bottom, height)
+		int params_per_capsule = 3;
+		totalParamNumber += system->skeletonRig.getCapsuleCount() * params_per_capsule;
+
+		for (size_t i = 0; i < system->skeletonRig.getCapsuleCount(); ++i) {
+			// Radius top bounds
+			bounds.emplace_back(0.01, 2.0); // radius_top
+			paramLogScaleTransformOn.emplace_back(false);
+			paramName.emplace_back("capsule_r_top");
+
+			// Radius bottom bounds
+			bounds.emplace_back(0.01, 2.0); // radius_bottom
+			paramLogScaleTransformOn.emplace_back(false);
+			paramName.emplace_back("capsule_r_bottom");
+
+			// Height bounds
+			bounds.emplace_back(0.01, 5.0); // height
+			paramLogScaleTransformOn.emplace_back(false);
+			paramName.emplace_back("capsule_height");
+		}
+	}
+
 	paramLowerBound = VecXd(totalParamNumber);
 	paramLowerBound.setZero();
 	paramUpperBound = VecXd(totalParamNumber);
@@ -249,6 +289,11 @@ VecXd OptimizeHelper::paramInfoToVecXd(Simulation::ParamInfo &param) {
 
 		x.segment(offset.offset_dL_dspline, totalSplineParamNumber) = splineParams;
 	}
+
+	if (taskInfo.dL_dcapsule_params) {
+		x.segment(offset.offset_dL_capsule_params, param.capsule_params.rows()) = param.capsule_params;
+	}
+
 	// x = 2 * (x_raw - mean) / scale
 	// x_raw = 0.5 * x * scale + mean
 
@@ -330,6 +375,10 @@ VecXd OptimizeHelper::gradientInfoToVecXd(
 		}
 		grad.segment(offset.offset_dL_dspline, totalSplineParamNumber) =
 				splineParams;
+	}
+
+	if (taskInfo.dL_dcapsule_params) {
+		grad.segment(offset.offset_dL_capsule_params, backwardInfo.dL_dcapsule_params.rows()) = backwardInfo.dL_dcapsule_params;
 	}
 
 	return grad;
@@ -441,6 +490,12 @@ Simulation::ParamInfo OptimizeHelper::vecXdToParamInfo(const VecXd &x) {
 				curSplinePos += splineDOF;
 			}
 		}
+	}
+
+	if (taskInfo.dL_dcapsule_params) {
+		// Capsule fit: 3 parameters per capsule (radius_top, radius_bottom, height)
+		int params_per_capsule = 3;
+		param.capsule_params = x.segment(offset.offset_dL_capsule_params, system->skeletonRig.getCapsuleCount() * params_per_capsule);
 	}
 
 	return param;

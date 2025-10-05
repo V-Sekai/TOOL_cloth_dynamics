@@ -1,0 +1,12 @@
+# Blender 4.2.0 MTL File: 'None'
+# www.blender.org
+
+newmtl StingrayPBS1.007
+Ns 200.000000
+Ka 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 3
+map_Kd /Users/zizhouhuang/Desktop/cloth-fit/cpp_clothing_deformer/tests/assets/garments/Suit_Jumpsuit_001/TXT_LCL_Suit_Jumpsuit_002_ALB.png
