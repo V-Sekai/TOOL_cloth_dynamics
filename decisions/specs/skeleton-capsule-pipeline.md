@@ -38,5 +38,4 @@ Based on code analysis and practical requirements for cloth simulation:
 - [**Loss Functions**](loss-functions.md) - Optimization objectives and constraints
 
 ### Appendices
-- [**Future Extensions**](future-extensions.md) - Advanced capabilities and research directions
 - [**References**](references.md) - External specifications and related work
