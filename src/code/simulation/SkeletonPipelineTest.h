@@ -54,6 +54,16 @@ public:
 	static bool computeCapsuleFitLossReport(const CapsuleRig &rig, const std::string &avatar_mesh_path);
 
 	/**
+	 * @brief Demonstrate iterative optimization with loss improvement across iterations
+	 */
+	static bool testCapsuleFitOptimization(const CapsuleRig &rig, const std::string &avatar_mesh_path);
+
+	/**
+	 * @brief Compute loss for a single iteration (helper for optimization demo)
+	 */
+	static bool computeCapsuleFitLossSingleIteration(const CapsuleRig &rig, const std::string &avatar_mesh_path, int iteration);
+
+	/**
 	 * @brief Run all tests
 	 */
 	static bool runAllTests();

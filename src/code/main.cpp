@@ -75,14 +75,7 @@ int main(int argc, char *argv[]) {
 	} else {
 		std::string demoName = std::string(demoNameStr);
 
-		// Handle skeleton test demo separately (doesn't need BackwardTaskSolver)
-		if (demoName == "skeleton_test") {
-			std::cout << "Running skeleton-capsule pipeline tests..." << std::endl;
-			bool success = tool_cloth_dynamics::SkeletonPipelineTest::runAllTests();
-			return success ? 0 : 1;
-		}
-
-		// Handle original cloth simulation demos
+		// Handle demo names to enum mapping
 		Demos demo;
 		if (demoName == "tshirt") {
 			demo = Demos::DEMO_WIND_TSHIRT;
@@ -94,6 +87,8 @@ int main(int argc, char *argv[]) {
 			demo = Demos::DEMO_SPHERE_ROTATE;
 		} else if (demoName == "dress") {
 			demo = Demos::DEMO_DRESS_TWIRL;
+		} else if (demoName == "skeleton_test") {
+			demo = Demos::DEMO_SKELETON_TEST;
 		} else {
 			Logging::logFatal("Unknown demo: " + demoName + "\n");
 			Logging::logFatal("Valid demos: tshirt, sock, hat, sphere, dress, skeleton_test\n");

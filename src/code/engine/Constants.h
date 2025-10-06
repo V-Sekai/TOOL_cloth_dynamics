@@ -96,6 +96,7 @@ enum Demos {
 	DEMO_DRESS_TWIRL, // 6
 	DEMO_SPHERE_ROTATE, // 7
 	DEMO_SKIRT, // 8
+	DEMO_SKELETON_TEST, // 9
 };
 
 static std::vector<std::string> DEMOS_STRINGS = std::vector<std::string>{
@@ -108,6 +109,7 @@ static std::vector<std::string> DEMOS_STRINGS = std::vector<std::string>{
 	"DEMO_DRESS_TWIRL0.3",
 	"SPHERE",
 	"SKIRT",
+	"SKELETON_TEST",
 };
 
 enum PrimitiveConfiguration {

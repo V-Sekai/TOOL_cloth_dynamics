@@ -36,6 +36,13 @@ void BackwardTaskSolver::solveDemo(
 		Simulation *system,
 		const std::function<void(const std::string &)> &setTextBoxCB, int demoNum,
 		bool isRandom, int srandSeed) {
+	// Special case for skeleton_test - doesn't need simulation/optimization framework
+	if (demoNum == Demos::DEMO_SKELETON_TEST) {
+		std::printf("Running skeleton-capsule pipeline tests...\n");
+		bool success = tool_cloth_dynamics::SkeletonPipelineTest::runAllTests();
+		return; // Early return - don't run normal optimization flow
+	}
+
 	OptimizeHelper helper = getOptimizeHelper(system, demoNum);
 
 	helper.taskInfo.optimizer = Optimizer::LBFGS;

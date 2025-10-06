@@ -39,10 +39,11 @@ public:
 	 * Computes capsule radii using mesh proximity queries with sparse octree.
 	 *
 	 * @param asset_directory Directory containing paired skeleton.obj + mesh.obj
+	 * @param subdivisions_per_bone Number of capsules per bone for improved fitting (default: 3)
 	 * @return Generated capsule rig with mesh-based radius estimation
 	 * @throws std::runtime_error if assets are not properly paired
 	 */
-	static CapsuleRig generateFromPairedAssets(const std::string &asset_directory, int subdivisions_per_bone = 1);
+	static CapsuleRig generateFromPairedAssets(const std::string &asset_directory, int subdivisions_per_bone = 3);
 
 	/**
 	 * @brief Add all capsules to simulation as collision primitives

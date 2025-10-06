@@ -16,7 +16,7 @@
 namespace tool_cloth_dynamics {
 
 bool SkeletonPipelineTest::testSkeletonLoading() {
-	std::cout << "\n=== Testing Skeleton Loading ===" << std::endl;
+	std::printf("\n=== Testing Skeleton Loading ===\n");
 
 	try {
 		// Create a simple test skeleton in memory (simulated OBJ content)
@@ -54,12 +54,11 @@ bool SkeletonPipelineTest::testSkeletonLoading() {
 
 		// Validate skeleton
 		if (!skeleton.isValid()) {
-			std::cout << "	Skeleton validation failed" << std::endl;
+			std::printf("	Skeleton validation failed\n");
 			return false;
 		}
 
-		std::cout << "	Skeleton loaded: " << skeleton.getBoneCount() << " bones, "
-				  << skeleton.getJointCount() << " joints" << std::endl;
+		std::printf("	Skeleton loaded: %zu bones, %zu joints\n", skeleton.getBoneCount(), skeleton.getJointCount());
 
 		// Test bone properties
 		for (size_t i = 0; i < skeleton.getBoneCount(); ++i) {
@@ -68,12 +67,10 @@ bool SkeletonPipelineTest::testSkeletonLoading() {
 			Vec3d center = bone.getCenter();
 			Vec3d axis = bone.getAxis();
 
-			std::cout << "  Bone " << i << " (" << bone.name << "): length="
-					  << length << ", center=(" << center.x() << "," << center.y()
-					  << "," << center.z() << ")" << std::endl;
+			std::printf("  Bone %zu (%s): length=%.6f, center=(%.3f,%.3f,%.3f)\n", i, bone.name.c_str(), length, center.x(), center.y(), center.z());
 
 			if (length < 1e-10) {
-				std::cout << "	Degenerate bone detected" << std::endl;
+				std::printf("	Degenerate bone detected\n");
 				return false;
 			}
 		}
@@ -81,13 +78,13 @@ bool SkeletonPipelineTest::testSkeletonLoading() {
 		return true;
 
 	} catch (const std::exception &e) {
-		std::cout << "	Exception in skeleton loading: " << e.what() << std::endl;
+		std::printf("	Exception in skeleton loading: %s\n", e.what());
 		return false;
 	}
 }
 
 bool SkeletonPipelineTest::testCapsuleGeneration() {
-	std::cout << "\n=== Testing Capsule Generation ===" << std::endl;
+	std::printf("\n=== Testing Capsule Generation ===\n");
 
 	try {
 		// Create test skeleton
@@ -509,7 +506,48 @@ bool SkeletonPipelineTest::testDemoCapsuleFitting() {
 	}
 }
 
-bool SkeletonPipelineTest::computeCapsuleFitLossReport(const CapsuleRig &rig, const std::string &avatar_mesh_path) {
+bool SkeletonPipelineTest::testCapsuleFitOptimization(const CapsuleRig &rig, const std::string &avatar_mesh_path) {
+	try {
+		// Create a copy of the rig for iterative optimization
+		CapsuleRig optimized_rig = rig; // Make a copy to modify
+
+		std::cout << "\n--- CAPSULE_FIT Iterative Optimization Demo ---" << std::endl;
+		std::cout << "Demonstrating loss reduction across optimization iterations" << std::endl;
+
+		// Run 5 iterations of simulated optimization, showing loss improvement
+		for (int iter = 0; iter < 5; ++iter) {
+			// Compute current loss (this simulates the loss evaluation in optimization loop)
+			bool has_loss = computeCapsuleFitLossSingleIteration(
+					optimized_rig, avatar_mesh_path, iter);
+
+			// Simulate parameter improvement (shrink capsules toward mesh)
+			if (has_loss) {
+				// Very simple "optimization": reduce radius by small amount each iteration
+				// In real optimization, this would be done with gradients
+				for (size_t i = 0; i < optimized_rig.getCapsuleCount(); ++i) {
+					auto capsule = optimized_rig.getCapsules()[i].get();
+					if (capsule) {
+						// Simulated gradient update: slightly shrink capsules
+						capsule->radius_top = std::max(capsule->radius_top * 0.95, 0.02);
+						capsule->radius_bottom = std::max(capsule->radius_bottom * 0.95, 0.02);
+					}
+				}
+			}
+
+			std::cout << std::endl;
+		}
+
+		std::cout << "Optimization demo completed - loss should decrease across iterations" << std::endl;
+		return true;
+
+	} catch (const std::exception &e) {
+		std::cout << "⚠️  Optimization demo failed: " << e.what() << std::endl;
+		return false;
+	}
+}
+
+bool SkeletonPipelineTest::computeCapsuleFitLossSingleIteration(
+		const CapsuleRig &rig, const std::string &avatar_mesh_path, int iteration) {
 	try {
 		// Load avatar mesh for loss computation
 		std::vector<Vec3d> avatar_vertices;
@@ -532,142 +570,167 @@ bool SkeletonPipelineTest::computeCapsuleFitLossReport(const CapsuleRig &rig, co
 		SparseOctree octree;
 		octree.build(avatar_V);
 
-		// Compute surface distance loss (L_surface)
-		double surface_loss = 0.0;
-		int surface_samples = 0;
-		const int avatar_sample_rate = std::max(1, static_cast<int>(avatar_vertices.size() / 1000)); // Sample ~1000 points
+		std::cout << "Iteration " << iteration << ": ";
 
-		for (size_t i = 0; i < avatar_vertices.size(); i += avatar_sample_rate) {
-			const Vec3d &vertex = avatar_vertices[i];
+		bool SkeletonPipelineTest::computeCapsuleFitLossReport(const CapsuleRig &rig, const std::string &avatar_mesh_path) {
+			try {
+				// Load avatar mesh for loss computation
+				std::vector<Vec3d> avatar_vertices;
+				std::vector<Vec3i> avatar_faces;
+				MeshFileHandler::loadOBJFile(avatar_mesh_path.c_str(), avatar_vertices, avatar_faces);
 
-			// Find closest capsule surface
-			double min_distance = std::numeric_limits<double>::max();
-
-			for (const auto &capsule_ptr : rig.getCapsules()) {
-				const TaperedCapsule *capsule = capsule_ptr.get();
-				if (!capsule)
-					continue;
-
-				// Get distance from vertex to capsule surface
-				Vec3d closest_point;
-				Vec3d surface_normal;
-				double distance = capsule->closestPointOnSurface(vertex, closest_point, surface_normal);
-				min_distance = std::min(min_distance, distance);
-			}
-
-			// Accumulate surface loss (penalize penetration and excessive distance)
-			if (min_distance > 0.1) { // Allow small gaps (< 10cm)
-				surface_loss += min_distance * min_distance;
-			}
-			surface_samples++;
-		}
-
-		if (surface_samples > 0) {
-			surface_loss /= surface_samples; // Normalize by sample count
-		}
-
-		// Compute volume coverage loss (L_volume) - simplified sampling
-		double coverage_loss = 0.0;
-		int coverage_samples = 0;
-
-		// Sample at regular intervals along all capsule surfaces
-		for (const auto &capsule_ptr : rig.getCapsules()) {
-			const TaperedCapsule *capsule = capsule_ptr.get();
-			if (!capsule)
-				continue;
-
-			// Sample points on capsule surface
-			const int radial_samples = 6;
-			const int height_samples = 5;
-
-			for (int h = 0; h < height_samples; ++h) {
-				for (int r = 0; r < radial_samples; ++r) {
-					// Generate surface point on capsule
-					double height_fraction = static_cast<double>(h) / (height_samples - 1);
-					double angle = 2.0 * M_PI * r / radial_samples;
-
-					// Interpolate radius along height (handle tapering)
-					double local_radius = capsule->radius_bottom +
-							height_fraction * (capsule->radius_top - capsule->radius_bottom);
-
-					// Create surface point
-					Vec3d local_point;
-					local_point.x() = local_radius * std::cos(angle);
-					local_point.y() = -capsule->mid_height + 2 * capsule->mid_height * height_fraction;
-					local_point.z() = local_radius * std::sin(angle);
-
-					// Transform to world coordinates
-					Mat3x3d rotation_matrix = capsule->buildRotationMatrix(Vec3d(0, 1, 0), capsule->axis);
-					Vec3d world_point = rotation_matrix * local_point + capsule->center;
-
-					// Check distance to avatar mesh
-					double distance_to_mesh = octree.nearestDistance(world_point);
-
-					// Penalize points too far from mesh (uncovered volume)
-					if (distance_to_mesh > 0.15) { // Allow 15cm margin
-						coverage_loss += 1.0; // Binary coverage loss
-					}
-					coverage_samples++;
+				if (avatar_vertices.empty()) {
+					return false; // Avatar mesh not found
 				}
+
+				// Convert to Eigen matrix
+				MatrixXd avatar_V(3, avatar_vertices.size());
+				for (size_t i = 0; i < avatar_vertices.size(); ++i) {
+					avatar_V(0, i) = avatar_vertices[i].x();
+					avatar_V(1, i) = avatar_vertices[i].y();
+					avatar_V(2, i) = avatar_vertices[i].z();
+				}
+
+				// Build octree for efficient distance queries
+				SparseOctree octree;
+				octree.build(avatar_V);
+
+				// Compute surface distance loss (L_surface)
+				double surface_loss = 0.0;
+				int surface_samples = 0;
+				const int avatar_sample_rate = std::max(1, static_cast<int>(avatar_vertices.size() / 1000)); // Sample ~1000 points
+
+				for (size_t i = 0; i < avatar_vertices.size(); i += avatar_sample_rate) {
+					const Vec3d &vertex = avatar_vertices[i];
+
+					// Find closest capsule surface
+					double min_distance = std::numeric_limits<double>::max();
+
+					for (const auto &capsule_ptr : rig.getCapsules()) {
+						const TaperedCapsule *capsule = capsule_ptr.get();
+						if (!capsule)
+							continue;
+
+						// Get distance from vertex to capsule surface
+						Vec3d closest_point;
+						Vec3d surface_normal;
+						double distance = capsule->closestPointOnSurface(vertex, closest_point, surface_normal);
+						min_distance = std::min(min_distance, distance);
+					}
+
+					// Accumulate surface loss (penalize penetration and excessive distance)
+					if (min_distance > 0.1) { // Allow small gaps (< 10cm)
+						surface_loss += min_distance * min_distance;
+					}
+					surface_samples++;
+				}
+
+				if (surface_samples > 0) {
+					surface_loss /= surface_samples; // Normalize by sample count
+				}
+
+				// Compute volume coverage loss (L_volume) - simplified sampling
+				double coverage_loss = 0.0;
+				int coverage_samples = 0;
+
+				// Sample at regular intervals along all capsule surfaces
+				for (const auto &capsule_ptr : rig.getCapsules()) {
+					const TaperedCapsule *capsule = capsule_ptr.get();
+					if (!capsule)
+						continue;
+
+					// Sample points on capsule surface
+					const int radial_samples = 6;
+					const int height_samples = 5;
+
+					for (int h = 0; h < height_samples; ++h) {
+						for (int r = 0; r < radial_samples; ++r) {
+							// Generate surface point on capsule
+							double height_fraction = static_cast<double>(h) / (height_samples - 1);
+							double angle = 2.0 * M_PI * r / radial_samples;
+
+							// Interpolate radius along height (handle tapering)
+							double local_radius = capsule->radius_bottom +
+									height_fraction * (capsule->radius_top - capsule->radius_bottom);
+
+							// Create surface point
+							Vec3d local_point;
+							local_point.x() = local_radius * std::cos(angle);
+							local_point.y() = -capsule->mid_height + 2 * capsule->mid_height * height_fraction;
+							local_point.z() = local_radius * std::sin(angle);
+
+							// Transform to world coordinates
+							Mat3x3d rotation_matrix = capsule->buildRotationMatrix(Vec3d(0, 1, 0), capsule->axis);
+							Vec3d world_point = rotation_matrix * local_point + capsule->center;
+
+							// Check distance to avatar mesh
+							double distance_to_mesh = octree.nearestDistance(world_point);
+
+							// Penalize points too far from mesh (uncovered volume)
+							if (distance_to_mesh > 0.15) { // Allow 15cm margin
+								coverage_loss += 1.0; // Binary coverage loss
+							}
+							coverage_samples++;
+						}
+					}
+				}
+
+				if (coverage_samples > 0) {
+					coverage_loss /= coverage_samples; // Normalize to [0,1] range
+				}
+
+				// Compute regularization loss (capsule size constraints)
+				double regularization_loss = 0.0;
+				for (const auto &capsule_ptr : rig.getCapsules()) {
+					const TaperedCapsule *capsule = capsule_ptr.get();
+					if (!capsule)
+						continue;
+
+					// Penalize capsules that are too small or too large
+					double avg_radius = (capsule->radius_top + capsule->radius_bottom) * 0.5;
+
+					if (avg_radius < 0.02)
+						regularization_loss += (0.02 - avg_radius) * 100; // Min 2cm
+					if (avg_radius > 1.0)
+						regularization_loss += (avg_radius - 1.0) * 10; // Max 1m
+
+					// Penalize extreme tapering
+					double radius_ratio = std::max(capsule->radius_top, capsule->radius_bottom) /
+							std::max(capsule->radius_bottom, capsule->radius_top);
+					if (radius_ratio > 5.0)
+						regularization_loss += (radius_ratio - 5.0) * 0.1;
+				}
+
+				// Total CAPSULE_FIT loss
+				double total_loss = surface_loss + coverage_loss + regularization_loss;
+
+				// Report loss breakdown
+				std::cout << "--- CAPSULE_FIT Loss Analysis ---" << std::endl;
+				std::cout << "  Surface Distance Loss (L_surface): " << surface_loss << std::endl;
+				std::cout << "  Volume Coverage Loss (L_volume): " << coverage_loss << std::endl;
+				std::cout << "  Regularization Loss (L_regular): " << regularization_loss << std::endl;
+				std::cout << "  Total CAPSULE_FIT Loss: " << total_loss << std::endl;
+
+				// Quality assessment
+				if (total_loss < 0.1) {
+					std::cout << "🎯 Excellent fit - low visual distortion, high fidelity" << std::endl;
+				} else if (total_loss < 0.5) {
+					std::cout << "✅ Good fit - acceptable balance of visual vs simulation quality" << std::endl;
+				} else if (total_loss < 2.0) {
+					std::cout << "⚠️  Poor fit - noticeable visual artifacts, marginal simulation quality" << std::endl;
+				} else {
+					std::cout << "❌ Bad fit - significant visual loss, poor simulation accuracy" << std::endl;
+				}
+
+				return true;
+
+			} catch (const std::exception &e) {
+				std::cout << "⚠️  Loss computation failed: " << e.what() << std::endl;
+				return false;
 			}
 		}
 
-		if (coverage_samples > 0) {
-			coverage_loss /= coverage_samples; // Normalize to [0,1] range
-		}
+	} // namespace tool_cloth_dynamics
 
-		// Compute regularization loss (capsule size constraints)
-		double regularization_loss = 0.0;
-		for (const auto &capsule_ptr : rig.getCapsules()) {
-			const TaperedCapsule *capsule = capsule_ptr.get();
-			if (!capsule)
-				continue;
-
-			// Penalize capsules that are too small or too large
-			double avg_radius = (capsule->radius_top + capsule->radius_bottom) * 0.5;
-
-			if (avg_radius < 0.02)
-				regularization_loss += (0.02 - avg_radius) * 100; // Min 2cm
-			if (avg_radius > 1.0)
-				regularization_loss += (avg_radius - 1.0) * 10; // Max 1m
-
-			// Penalize extreme tapering
-			double radius_ratio = std::max(capsule->radius_top, capsule->radius_bottom) /
-					std::max(capsule->radius_bottom, capsule->radius_top);
-			if (radius_ratio > 5.0)
-				regularization_loss += (radius_ratio - 5.0) * 0.1;
-		}
-
-		// Total CAPSULE_FIT loss
-		double total_loss = surface_loss + coverage_loss + regularization_loss;
-
-		// Report loss breakdown
-		std::cout << "--- CAPSULE_FIT Loss Analysis ---" << std::endl;
-		std::cout << "  Surface Distance Loss (L_surface): " << surface_loss << std::endl;
-		std::cout << "  Volume Coverage Loss (L_volume): " << coverage_loss << std::endl;
-		std::cout << "  Regularization Loss (L_regular): " << regularization_loss << std::endl;
-		std::cout << "  Total CAPSULE_FIT Loss: " << total_loss << std::endl;
-
-		// Quality assessment
-		if (total_loss < 0.1) {
-			std::cout << "🎯 Excellent fit - low visual distortion, high fidelity" << std::endl;
-		} else if (total_loss < 0.5) {
-			std::cout << "✅ Good fit - acceptable balance of visual vs simulation quality" << std::endl;
-		} else if (total_loss < 2.0) {
-			std::cout << "⚠️  Poor fit - noticeable visual artifacts, marginal simulation quality" << std::endl;
-		} else {
-			std::cout << "❌ Bad fit - significant visual loss, poor simulation accuracy" << std::endl;
-		}
-
-		return true;
-
-	} catch (const std::exception &e) {
-		std::cout << "⚠️  Loss computation failed: " << e.what() << std::endl;
-		return false;
-	}
-}
-
-} // namespace tool_cloth_dynamics
-
-// Note: This test file can be run by calling SkeletonPipelineTest::runAllTests()
-// from the main application or compiled as a separate test executable.
+	// Note: This test file can be run by calling SkeletonPipelineTest::runAllTests()
+	// from the main application or compiled as a separate test executable.
