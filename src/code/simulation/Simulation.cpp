@@ -2564,7 +2564,7 @@ void Simulation::loadSkeletonCapsules(const std::string &asset_directory,
 		double pin_distance) {
 	try {
 		// Generate skeleton rig from paired assets
-		skeletonRig = tool_cloth_dynamics::CapsuleRig::generateFromPairedAssets(asset_directory, radius);
+		skeletonRig = tool_cloth_dynamics::CapsuleRig::generateFromPairedAssets(asset_directory);
 		hasSkeletonRig = true;
 
 		// Add capsules to simulation
@@ -3539,10 +3539,12 @@ double Simulation::calculateLossAndGradient(LossType &lossType,
 		}
 
 		case (CAPSULE_FIT): {
+			std::printf("[CAPSULE_FIT] Frame %d: Loss calculation started\n", idx);
 			if (!hasSkeletonRig) {
 				std::printf("WARNING: CAPSULE_FIT loss requires skeleton rig but none loaded\n");
 				break;
 			}
+			std::printf("[CAPSULE_FIT] Frame %d: Skeleton rig available with %zu capsules\n", idx, skeletonRig.getCapsuleCount());
 
 			// Capsule fit: 6 parameters per capsule (center_x, center_y, center_z, radius_top, radius_bottom, height)
 			const int params_per_capsule = 6;
@@ -3772,6 +3774,8 @@ double Simulation::calculateLossAndGradient(LossType &lossType,
 
 			if (calculateLoss) {
 				L += totalLoss / sampledIndices.size(); // Normalize by number of samples
+				std::printf("[CAPSULE_FIT] Frame %d: Final loss L=%.6f (surface=%.3f, coverage=%.3f, regularization=%.3f, length=%.3f)\n",
+						idx, L, surfaceLoss, coverageLoss, regularizationLoss, lengthPreservationLoss);
 			}
 
 			break;
@@ -3862,6 +3866,7 @@ void Simulation::resetSystemWithParams(
 			p.pos = param.x0.segment(p.idx * 3, 3);
 		}
 	}
+
 	if (std::isnan(forwardRecords[0].x.norm()) ||
 			std::isnan(forwardRecords[0].v.norm())) {
 		std::printf("WARNING: NAN encountered after reset: x: %.4f v: %.4f\n",

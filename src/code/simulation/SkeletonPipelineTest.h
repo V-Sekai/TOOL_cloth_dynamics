@@ -40,6 +40,11 @@ public:
 	static bool testDemoScenes();
 
 	/**
+	 * @brief Test capsule fitting with CAPSULE_FIT loss
+	 */
+	static bool testDemoCapsuleFitting();
+
+	/**
 	 * @brief Run all tests
 	 */
 	static bool runAllTests();

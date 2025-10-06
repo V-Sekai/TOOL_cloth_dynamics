@@ -31,7 +31,7 @@ CapsuleRig CapsuleRig::generate(const Skeleton &skel, double radius) {
 	return rig;
 }
 
-CapsuleRig CapsuleRig::generateFromPairedAssets(const std::string &asset_directory, double radius) {
+CapsuleRig CapsuleRig::generateFromPairedAssets(const std::string &asset_directory) {
 	// Construct expected file paths
 	std::string skeleton_path = asset_directory + "/skeleton.obj";
 	std::string mesh_path = asset_directory + "/avatar.obj";
@@ -52,11 +52,33 @@ CapsuleRig CapsuleRig::generateFromPairedAssets(const std::string &asset_directo
 	// Load skeleton
 	Skeleton skeleton = SkeletonLoader::loadFromOBJ(skeleton_path);
 
-	// Generate rig
-	CapsuleRig rig = generate(skeleton, radius);
+	// Load mesh for radius estimation
+	std::vector<Vec3d> mesh_vertices;
+	std::vector<Vec3i> mesh_faces;
+	MeshFileHandler::loadOBJFile(mesh_path.c_str(), mesh_vertices, mesh_faces);
+
+	// Convert mesh to Eigen matrix for octree
+	MatXd mesh_V(3, mesh_vertices.size());
+	for (size_t i = 0; i < mesh_vertices.size(); ++i) {
+		mesh_V(0, i) = mesh_vertices[i].x();
+		mesh_V(1, i) = mesh_vertices[i].y();
+		mesh_V(2, i) = mesh_vertices[i].z();
+	}
+
+	// Generate rig with mesh-based radius estimation
+	CapsuleRig rig;
+	rig.skeleton = skeleton;
+	rig.capsules = std::move(CapsuleGenerator::generateCapsulesWithAdvancedRadii(skeleton, mesh_V, true));
+
+	// Build bone-to-capsule mapping
+	rig.bone_to_capsule_map.resize(skeleton.getBoneCount());
+	for (size_t i = 0; i < skeleton.getBoneCount(); ++i) {
+		rig.bone_to_capsule_map[i] = static_cast<int>(i);
+	}
+
 	rig.asset_source_directory = asset_directory;
 
-	std::cout << "Generated CapsuleRig from paired assets: " << asset_directory << std::endl;
+	std::cout << "Generated CapsuleRig from paired assets with mesh-based radius estimation: " << asset_directory << std::endl;
 
 	return rig;
 }

@@ -32,19 +32,17 @@ public:
 	static CapsuleRig generate(const Skeleton &skel, double radius = 0.1);
 
 	/**
-	 * @brief Generate capsule rig from paired assets directory
+	 * @brief Generate capsule rig from paired assets directory with mesh-based radius estimation
 	 *
 	 * Enforces asset pairing constraints by loading skeleton and mesh
 	 * from the same directory (e.g., "avatars/FoxGirl/").
+	 * Computes capsule radii using mesh proximity queries with sparse octree.
 	 *
 	 * @param asset_directory Directory containing paired skeleton.obj + mesh.obj
-	 * @param radius Fixed radius for capsules
-	 * @return Generated capsule rig
+	 * @return Generated capsule rig with mesh-based radius estimation
 	 * @throws std::runtime_error if assets are not properly paired
 	 */
-	static CapsuleRig generateFromPairedAssets(
-			const std::string &asset_directory,
-			double radius = 0.1);
+	static CapsuleRig generateFromPairedAssets(const std::string &asset_directory);
 
 	/**
 	 * @brief Add all capsules to simulation as collision primitives
