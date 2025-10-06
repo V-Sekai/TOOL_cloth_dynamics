@@ -208,32 +208,38 @@ double RadiusEstimator::estimateRadius(
 std::pair<double, double> RadiusEstimator::estimateTaper(
 		const Bone &bone,
 		const SparseOctree &octree) {
-	// Sample at start and end, plus a few points in between for robustness
-	const int samples_per_end = 3;
-	std::vector<double> start_radii, end_radii;
+	// Sample directly at bone endpoints for clean taper estimation
+	Vec3d sample_start = bone.start; // t = 0
+	Vec3d sample_end = bone.end; // t = 1
 
-	// Sample near start
-	for (int i = 0; i < samples_per_end; i++) {
-		double t = static_cast<double>(i) / (samples_per_end + 1); // 0.25, 0.5, 0.75 for samples_per_end=3
-		Vec3d sample = bone.start + t * 0.3 * (bone.end - bone.start); // Sample first 30% of bone
-		start_radii.push_back(octree.nearestDistance(sample));
-	}
-
-	// Sample near end
-	for (int i = 0; i < samples_per_end; i++) {
-		double t = 0.7 + static_cast<double>(i) / (samples_per_end + 1) * 0.3; // Last 30% of bone
-		Vec3d sample = bone.start + t * (bone.end - bone.start);
-		end_radii.push_back(octree.nearestDistance(sample));
-	}
-
-	// Use median of samples for robustness
-	std::sort(start_radii.begin(), start_radii.end());
-	std::sort(end_radii.begin(), end_radii.end());
-
-	double r_start = start_radii[start_radii.size() / 2];
-	double r_end = end_radii[end_radii.size() / 2];
+	double r_start = octree.nearestDistance(sample_start);
+	double r_end = octree.nearestDistance(sample_end);
 
 	return { r_start, r_end };
+}
+
+std::vector<double> RadiusEstimator::sampleRadiusProfile(
+		const Bone &bone,
+		const SparseOctree &octree,
+		int num_samples) {
+	if (num_samples <= 2) {
+		num_samples = 20; // Default for continuous profile sampling
+	}
+
+	std::vector<double> radius_profile;
+	radius_profile.reserve(num_samples);
+
+	// Sample radius at points along the full bone length
+	for (int i = 0; i < num_samples; ++i) {
+		double t = static_cast<double>(i) / (num_samples - 1);
+		Vec3d sample_point = bone.start + t * (bone.end - bone.start);
+
+		// Get distance to nearest mesh vertex (this is our radius estimate)
+		double radius = octree.nearestDistance(sample_point);
+		radius_profile.push_back(radius);
+	}
+
+	return radius_profile;
 }
 
 std::vector<double> RadiusEstimator::estimateAllRadii(

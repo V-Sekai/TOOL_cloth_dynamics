@@ -42,7 +42,7 @@ public:
 	 * @return Generated capsule rig with mesh-based radius estimation
 	 * @throws std::runtime_error if assets are not properly paired
 	 */
-	static CapsuleRig generateFromPairedAssets(const std::string &asset_directory);
+	static CapsuleRig generateFromPairedAssets(const std::string &asset_directory, int subdivisions_per_bone = 1);
 
 	/**
 	 * @brief Add all capsules to simulation as collision primitives
@@ -137,7 +137,7 @@ public:
 private:
 	Skeleton skeleton;
 	std::vector<std::unique_ptr<TaperedCapsule>> capsules;
-	std::vector<int> bone_to_capsule_map;
+	std::vector<std::vector<int>> bone_to_capsules_map; // 1:many mapping from bones to capsules
 	std::string asset_source_directory; // Track pairing source
 };
 
@@ -175,7 +175,8 @@ public:
 	static std::vector<std::unique_ptr<TaperedCapsule>> generateCapsulesWithAdvancedRadii(
 			const Skeleton &skeleton,
 			const MatXd &mesh_vertices,
-			bool use_tapered_radii = true);
+			bool use_tapered_radii = true,
+			int subdivisions_per_bone = 1);
 
 	/**
 	 * @brief Convert a single bone to a tapered capsule
@@ -192,6 +193,31 @@ public:
 			double radius_bottom = 0.1,
 			Vec3d color = Vec3d(0.8, 0.7, 0.6) // Skin-like color
 	);
+
+	/**
+	 * @brief Subdivide a bone into multiple aligned sub-bones for improved capsule resolution
+	 *
+	 * @param bone Input bone to subdivide
+	 * @param num_subdivisions Number of sub-bones to create
+	 * @return Vector of sub-bones along the original bone axis
+	 */
+	static std::vector<Bone> subdivideBone(const Bone &bone, int num_subdivisions);
+
+	/**
+	 * @brief Subdivide a bone into sub-bones with continuous radius assignment from pre-sampled profile
+	 *
+	 * Creates sub-bones with radii that smoothly transition along the full bone length,
+	 * preventing discontinuities between adjacent capsules.
+	 *
+	 * @param bone Input bone to subdivide
+	 * @param radius_profile Pre-sampled radius values along full bone length
+	 * @param num_subdivisions Number of sub-bones to create
+	 * @return Vector of (sub-bone, radii) pairs with continuous radius transitions
+	 */
+	static std::vector<std::pair<Bone, std::pair<double, double>>> subdivideBoneWithRadii(
+			const Bone &bone,
+			const std::vector<double> &radius_profile,
+			int num_subdivisions);
 
 	/**
 	 * @brief Validate skeleton structure before processing

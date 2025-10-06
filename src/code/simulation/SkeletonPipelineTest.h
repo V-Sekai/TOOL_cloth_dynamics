@@ -1,6 +1,10 @@
 #pragma once
 
+#include <string>
+
+// Forward declaration to avoid circular dependency
 namespace tool_cloth_dynamics {
+class CapsuleRig;
 
 /**
  * @brief Simple test suite for skeleton-capsule pipeline
@@ -43,6 +47,11 @@ public:
 	 * @brief Test capsule fitting with CAPSULE_FIT loss
 	 */
 	static bool testDemoCapsuleFitting();
+
+	/**
+	 * @brief Compute and report capsule fit loss metrics against avatar mesh
+	 */
+	static bool computeCapsuleFitLossReport(const CapsuleRig &rig, const std::string &avatar_mesh_path);
 
 	/**
 	 * @brief Run all tests

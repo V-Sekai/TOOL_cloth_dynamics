@@ -136,6 +136,14 @@ public:
 			const SparseOctree &octree);
 
 	/**
+	 * @brief Sample radius values along the entire bone length for continuous profiles
+	 */
+	static std::vector<double> sampleRadiusProfile(
+			const struct Bone &bone,
+			const SparseOctree &octree,
+			int num_samples = 20);
+
+	/**
 	 * @brief Estimate radii for all bones in skeleton
 	 *
 	 * @param skeleton Input skeleton

@@ -20,10 +20,10 @@ CapsuleRig CapsuleRig::generate(const Skeleton &skel, double radius) {
 	rig.skeleton = skel;
 	rig.capsules = std::move(CapsuleGenerator::generateCapsules(skel, radius));
 
-	// Build bone-to-capsule mapping
-	rig.bone_to_capsule_map.resize(skel.getBoneCount());
+	// Build bone-to-capsules mapping (simple generate creates 1 capsule per bone)
+	rig.bone_to_capsules_map.resize(skel.getBoneCount());
 	for (size_t i = 0; i < skel.getBoneCount(); ++i) {
-		rig.bone_to_capsule_map[i] = static_cast<int>(i);
+		rig.bone_to_capsules_map[i] = { static_cast<int>(i) };
 	}
 
 	std::cout << "Generated CapsuleRig with " << rig.getCapsuleCount() << " capsules" << std::endl;
@@ -31,7 +31,7 @@ CapsuleRig CapsuleRig::generate(const Skeleton &skel, double radius) {
 	return rig;
 }
 
-CapsuleRig CapsuleRig::generateFromPairedAssets(const std::string &asset_directory) {
+CapsuleRig CapsuleRig::generateFromPairedAssets(const std::string &asset_directory, int subdivisions_per_bone) {
 	// Construct expected file paths
 	std::string skeleton_path = asset_directory + "/skeleton.obj";
 	std::string mesh_path = asset_directory + "/avatar.obj";
@@ -65,20 +65,24 @@ CapsuleRig CapsuleRig::generateFromPairedAssets(const std::string &asset_directo
 		mesh_V(2, i) = mesh_vertices[i].z();
 	}
 
-	// Generate rig with mesh-based radius estimation
+	// Generate rig with mesh-based radius estimation and bone subdivision
 	CapsuleRig rig;
 	rig.skeleton = skeleton;
-	rig.capsules = std::move(CapsuleGenerator::generateCapsulesWithAdvancedRadii(skeleton, mesh_V, true));
+	rig.capsules = std::move(CapsuleGenerator::generateCapsulesWithAdvancedRadii(skeleton, mesh_V, true, subdivisions_per_bone));
 
-	// Build bone-to-capsule mapping
-	rig.bone_to_capsule_map.resize(skeleton.getBoneCount());
-	for (size_t i = 0; i < skeleton.getBoneCount(); ++i) {
-		rig.bone_to_capsule_map[i] = static_cast<int>(i);
+	// Build bone-to-capsules mapping (1:many)
+	rig.bone_to_capsules_map.resize(skeleton.getBoneCount());
+	size_t capsule_idx = 0;
+	for (size_t bone_idx = 0; bone_idx < skeleton.getBoneCount(); ++bone_idx) {
+		rig.bone_to_capsules_map[bone_idx].resize(subdivisions_per_bone);
+		for (int sub_idx = 0; sub_idx < subdivisions_per_bone; ++sub_idx) {
+			rig.bone_to_capsules_map[bone_idx][sub_idx] = static_cast<int>(capsule_idx++);
+		}
 	}
 
 	rig.asset_source_directory = asset_directory;
 
-	std::cout << "Generated CapsuleRig from paired assets with mesh-based radius estimation: " << asset_directory << std::endl;
+	std::cout << "Generated CapsuleRig from paired assets with " << subdivisions_per_bone << " capsules per bone: " << asset_directory << std::endl;
 
 	return rig;
 }
@@ -215,7 +219,8 @@ std::vector<std::unique_ptr<TaperedCapsule>> CapsuleGenerator::generateCapsules(
 std::vector<std::unique_ptr<TaperedCapsule>> CapsuleGenerator::generateCapsulesWithAdvancedRadii(
 		const Skeleton &skeleton,
 		const MatXd &mesh_vertices,
-		bool use_tapered_radii) {
+		bool use_tapered_radii,
+		int subdivisions_per_bone) {
 	if (!validateSkeleton(skeleton)) {
 		throw std::runtime_error("Invalid skeleton provided to CapsuleGenerator::generateCapsulesWithAdvancedRadii");
 	}
@@ -230,33 +235,162 @@ std::vector<std::unique_ptr<TaperedCapsule>> CapsuleGenerator::generateCapsulesW
 	octree.build(mesh_vertices);
 
 	std::vector<std::unique_ptr<TaperedCapsule>> capsules;
-	capsules.reserve(skeleton.getBoneCount());
+	capsules.reserve(skeleton.getBoneCount() * subdivisions_per_bone);
 
-	for (const Bone &bone : skeleton.bones) {
+	for (const Bone &original_bone : skeleton.bones) {
 		if (use_tapered_radii) {
-			// Estimate different radii at both ends for tapered effect
-			auto [radius_start, radius_end] = RadiusEstimator::estimateTaper(bone, octree);
+			// Pre-sample continuous radius profile along entire bone
+			std::vector<double> radius_profile = RadiusEstimator::sampleRadiusProfile(original_bone, octree);
 
-			// Apply safety factors to prevent too-thin capsules
-			radius_start = std::max(radius_start * 0.8, 0.02); // Min 2cm
-			radius_end = std::max(radius_end * 0.8, 0.02);
+			// Subdivide bone with continuous radius assignment
+			auto sub_bones_with_radii = subdivideBoneWithRadii(original_bone, radius_profile, subdivisions_per_bone);
 
-			auto capsule = boneToTaperedCapsule(bone, radius_end, radius_start, COLOR_SKIN);
-			capsules.push_back(std::move(capsule));
+			for (const auto &[sub_bone, radii_pair] : sub_bones_with_radii) {
+				auto [radius_start, radius_end] = radii_pair;
+
+				// Apply safety factors to prevent too-thin capsules
+				radius_start = std::max(radius_start * 0.8, 0.02); // Min 2cm
+				radius_end = std::max(radius_end * 0.8, 0.02);
+
+				auto capsule = boneToTaperedCapsule(sub_bone, radius_start, radius_end, COLOR_SKIN);
+				capsules.push_back(std::move(capsule));
+			}
 		} else {
-			// Use single radius estimated along bone center
-			double radius = RadiusEstimator::estimateRadius(bone, octree);
-			radius = std::max(radius * 0.8, 0.02); // Safety factor and minimum
+			// For uniform radii, just subdivide geometry without continuous profile sampling
+			std::vector<Bone> sub_bones = subdivideBone(original_bone, subdivisions_per_bone);
 
-			auto capsule = boneToTaperedCapsule(bone, radius, radius, COLOR_SKIN);
-			capsules.push_back(std::move(capsule));
+			for (const Bone &sub_bone : sub_bones) {
+				// Use single radius estimated along bone center
+				double radius = RadiusEstimator::estimateRadius(sub_bone, octree);
+				radius = std::max(radius * 0.8, 0.02); // Safety factor and minimum
+
+				auto capsule = boneToTaperedCapsule(sub_bone, radius, radius, COLOR_SKIN);
+				capsules.push_back(std::move(capsule));
+			}
 		}
 	}
 
-	std::cout << "Generated " << capsules.size() << " capsules with advanced radius estimation"
-			  << (use_tapered_radii ? " (tapered)" : " (uniform)") << std::endl;
+	std::cout << "Generated " << capsules.size() << " capsules from " << skeleton.getBoneCount()
+			  << " bones with " << subdivisions_per_bone << " subdivisions each (advanced radii)"
+			  << (use_tapered_radii ? ", tapered" : ", uniform") << std::endl;
 
 	return capsules;
+}
+
+std::vector<Bone> CapsuleGenerator::subdivideBone(const Bone &bone, int num_subdivisions) {
+	if (num_subdivisions <= 1) {
+		return { bone };
+	}
+
+	std::vector<Bone> sub_bones;
+	sub_bones.reserve(num_subdivisions);
+
+	// Calculate sub-bone length
+	double total_length = bone.getLength();
+	double sub_length = total_length / num_subdivisions;
+
+	// Direction from start to end
+	Vec3d direction = bone.end - bone.start;
+	if (direction.norm() < 1e-10) {
+		// Degenerate bone - return as-is
+		return { bone };
+	}
+	direction.normalize();
+
+	// Create sub-bones along the bone axis
+	Vec3d current_start = bone.start;
+	for (int i = 0; i < num_subdivisions; ++i) {
+		Vec3d current_end = current_start + direction * sub_length;
+
+		// For the last sub-bone, make sure we reach the exact endpoint
+		if (i == num_subdivisions - 1) {
+			current_end = bone.end;
+		}
+
+		Bone sub_bone;
+		sub_bone.start = current_start;
+		sub_bone.end = current_end;
+		sub_bone.parent_id = bone.parent_id; // Keep same parent relationship
+		sub_bone.name = bone.name + "_sub" + std::to_string(i);
+
+		sub_bones.push_back(sub_bone);
+		current_start = current_end;
+	}
+
+	return sub_bones;
+}
+
+// Helper function to interpolate radius from pre-sampled profile
+std::pair<double, double> interpolateRadiiFromProfile(
+		const std::vector<double> &radius_profile,
+		double sub_bone_start_fraction,
+		double sub_bone_end_fraction) {
+	// Map fractions [0,1] to profile indices [0, profile.size()-1]
+	int profile_size = radius_profile.size();
+	int start_idx = static_cast<int>(sub_bone_start_fraction * (profile_size - 1));
+	int end_idx = static_cast<int>(sub_bone_end_fraction * (profile_size - 1));
+
+	// Clamp indices to prevent out-of-bounds
+	start_idx = std::max(0, std::min(start_idx, profile_size - 1));
+	end_idx = std::max(0, std::min(end_idx, profile_size - 1));
+
+	return { radius_profile[start_idx], radius_profile[end_idx] };
+}
+
+// Updated subdivideBone with radius estimation
+std::vector<std::pair<Bone, std::pair<double, double>>> CapsuleGenerator::subdivideBoneWithRadii(
+		const Bone &bone,
+		const std::vector<double> &radius_profile,
+		int num_subdivisions) {
+	if (num_subdivisions <= 1) {
+		// For single capsule, interpolate from entire profile
+		auto radii = interpolateRadiiFromProfile(radius_profile, 0.0, 1.0);
+		return { { bone, radii } };
+	}
+
+	std::vector<std::pair<Bone, std::pair<double, double>>> sub_bones_with_radii;
+	sub_bones_with_radii.reserve(num_subdivisions);
+
+	// Calculate sub-bone length
+	double total_length = bone.getLength();
+	double sub_length = total_length / num_subdivisions;
+
+	// Direction from start to end
+	Vec3d direction = bone.end - bone.start;
+	if (direction.norm() < 1e-10) {
+		// Degenerate bone - return as-is
+		auto radii = interpolateRadiiFromProfile(radius_profile, 0.0, 1.0);
+		return { { bone, radii } };
+	}
+	direction.normalize();
+
+	// Create sub-bones along the bone axis with continuous radius assignment
+	Vec3d current_start = bone.start;
+	for (int i = 0; i < num_subdivisions; ++i) {
+		Vec3d current_end = current_start + direction * sub_length;
+
+		// For the last sub-bone, make sure we reach the exact endpoint
+		if (i == num_subdivisions - 1) {
+			current_end = bone.end;
+		}
+
+		Bone sub_bone;
+		sub_bone.start = current_start;
+		sub_bone.end = current_end;
+		sub_bone.parent_id = bone.parent_id;
+		sub_bone.name = bone.name + "_sub" + std::to_string(i);
+
+		// Interpolate radii from the continuous profile
+		// Map sub-bone position [0,1] along the profile
+		double start_fraction = static_cast<double>(i) / num_subdivisions;
+		double end_fraction = static_cast<double>(i + 1) / num_subdivisions;
+		auto radii = interpolateRadiiFromProfile(radius_profile, start_fraction, end_fraction);
+
+		sub_bones_with_radii.emplace_back(sub_bone, radii);
+		current_start = current_end;
+	}
+
+	return sub_bones_with_radii;
 }
 
 std::unique_ptr<TaperedCapsule> CapsuleGenerator::boneToTaperedCapsule(
