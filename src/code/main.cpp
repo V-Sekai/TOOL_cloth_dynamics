@@ -2,7 +2,6 @@
 #include "optimization/BackwardTaskSolver.h"
 #include "optimization/OptimizationTaskConfigurations.h"
 #include "simulation/Simulation.h"
-#include "simulation/SkeletonPipelineTest.h"
 #include "supports/Logging.h"
 #include <mutex>
 #include <queue>
@@ -57,7 +56,7 @@ int main(int argc, char *argv[]) {
 		BACKWARD_TASK_DEMO, /* 2 */
 	};
 	std::vector<std::string> validDemos = { "tshirt", "sock", "hat", "sphere",
-		"dress", "skeleton_test" };
+		"dress" };
 	char *demoNameStr = getCmdOption(argv, argv + argc, "-demo");
 	char *randSeedStr = getCmdOption(argv, argv + argc, "-seed");
 	char *expStr = getCmdOption(argv, argv + argc, "-exp");
@@ -70,7 +69,7 @@ int main(int argc, char *argv[]) {
 	if (argc == 1) {
 		Logging::logFatal(
 				"WARNING: No command line argument.\n Please specify "
-				"-demo [tshirt, sock, hat, sphere, dress, skeleton_test] -seed [number]\n");
+				"-demo [tshirt, sock, hat, sphere, dress] -seed [number]\n");
 		Logging::logFatal("Exiting program...\n");
 	} else {
 		std::string demoName = std::string(demoNameStr);
@@ -87,11 +86,9 @@ int main(int argc, char *argv[]) {
 			demo = Demos::DEMO_SPHERE_ROTATE;
 		} else if (demoName == "dress") {
 			demo = Demos::DEMO_DRESS_TWIRL;
-		} else if (demoName == "skeleton_test") {
-			demo = Demos::DEMO_SKELETON_TEST;
 		} else {
 			Logging::logFatal("Unknown demo: " + demoName + "\n");
-			Logging::logFatal("Valid demos: tshirt, sock, hat, sphere, dress, skeleton_test\n");
+			Logging::logFatal("Valid demos: tshirt, sock, hat, sphere, dress\n");
 			exit(0);
 		}
 
@@ -100,8 +97,7 @@ int main(int argc, char *argv[]) {
 			exit(0);
 		}
 
-		Simulation::SceneConfiguration initSceneProfile =
-				OptimizationTaskConfigurations::hatScene;
+		Simulation::SceneConfiguration initSceneProfile = OptimizationTaskConfigurations::hatScene;
 		Simulation *clothSystem =
 				Simulation::createSystem(initSceneProfile, Vec3d(0, 0, 0), true);
 		BackwardTaskSolver::solveDemo(

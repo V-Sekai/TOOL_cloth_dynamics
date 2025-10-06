@@ -28,7 +28,6 @@
 // Email: liyifei@csail.mit.edu
 //
 #include "BackwardTaskSolver.h"
-#include "../simulation/GarmentFitter.h"
 #include <LBFGSB.h>
 #include <LBFGSpp/Param.h>
 
@@ -36,20 +35,6 @@ void BackwardTaskSolver::solveDemo(
 		Simulation *system,
 		const std::function<void(const std::string &)> &setTextBoxCB, int demoNum,
 		bool isRandom, int srandSeed) {
-	// Special case for skeleton_test - runs optimization demo, not just tests
-	if (demoNum == Demos::DEMO_SKELETON_TEST) {
-		std::printf("Running skeleton-capsule optimization demo...\n");
-		// Load skeleton capsules and run CAPSULE_FIT optimization
-		system->loadSkeletonCapsules("src/assets/meshes/avatars/FoxGirl");
-		if (system->hasSkeletonRig) {
-			std::printf("Skeleton rig loaded with %zu capsules, starting CAPSULE_FIT optimization\n", system->skeletonRig.getCapsuleCount());
-		} else {
-			std::printf("Failed to load skeleton rig for optimization\n");
-			return;
-		}
-		// Fall through to normal optimization framework
-	}
-
 	OptimizeHelper helper = getOptimizeHelper(system, demoNum);
 
 	helper.taskInfo.optimizer = Optimizer::LBFGS;
@@ -143,14 +128,6 @@ OptimizeHelper BackwardTaskSolver::getOptimizeHelper(Simulation *system,
 	if (demoNum != Demos::DEMO_WIND_SIM2REAL) {
 		system->createClothMesh();
 		system->initScene();
-
-		// Integrate garment fitting for wear demos
-		if (demoNum == Demos::DEMO_WEAR_HAT || demoNum == Demos::DEMO_WEAR_SOCK) {
-			std::cout << "Initializing garment fitting for demo..." << std::endl;
-
-			// Fit garment to rig using bone-based anchoring
-			tool_cloth_dynamics::GarmentFitter::fitGarmentToRig(system, system->skeletonRig);
-		}
 	}
 
 	setInitialConditions(demoNum, system, paramGroundtruth, taskInfo);

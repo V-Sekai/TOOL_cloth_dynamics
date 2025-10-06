@@ -1,6 +1,5 @@
 #include "SparseOctree.h"
 #include "../supports/Logging.h"
-#include "SkeletonLoader.h"
 #include <algorithm>
 #include <limits>
 #include <numeric>
@@ -33,8 +32,6 @@ void SparseOctree::build(const MatXd &mesh_V) {
 	// Log statistics
 	int total_nodes, leaf_nodes, max_depth;
 	getStatistics(total_nodes, leaf_nodes, max_depth);
-
-	std::cout << "SparseOctree built: " << std::to_string(total_nodes) << " nodes, " << std::to_string(leaf_nodes) << " leaves, max depth " << std::to_string(max_depth) << std::endl;
 }
 
 double SparseOctree::nearestDistance(const Vec3d &query_point) const {
@@ -173,93 +170,6 @@ void SparseOctree::calculateStatistics(
 			calculateStatistics(child, total_nodes, leaf_nodes, max_depth, current_depth + 1);
 		}
 	}
-}
-
-// RadiusEstimator implementation
-
-double RadiusEstimator::estimateRadius(
-		const Bone &bone,
-		const SparseOctree &octree,
-		int num_samples) {
-	std::vector<double> radii;
-	radii.reserve(num_samples);
-
-	// Sample points along bone
-	for (int i = 0; i < num_samples; i++) {
-		double t = (num_samples > 1) ? static_cast<double>(i) / (num_samples - 1) : 0.5;
-		Vec3d sample = bone.start + t * (bone.end - bone.start);
-
-		// O(log N) nearest distance query
-		double dist = octree.nearestDistance(sample);
-		radii.push_back(dist);
-	}
-
-	// Return median radius (robust to outliers)
-	std::sort(radii.begin(), radii.end());
-	size_t median_idx = radii.size() / 2;
-
-	if (radii.size() % 2 == 0 && radii.size() > 1) {
-		return (radii[median_idx - 1] + radii[median_idx]) * 0.5;
-	} else {
-		return radii[median_idx];
-	}
-}
-
-std::pair<double, double> RadiusEstimator::estimateTaper(
-		const Bone &bone,
-		const SparseOctree &octree) {
-	// Sample directly at bone endpoints for clean taper estimation
-	Vec3d sample_start = bone.start; // t = 0
-	Vec3d sample_end = bone.end; // t = 1
-
-	double r_start = octree.nearestDistance(sample_start);
-	double r_end = octree.nearestDistance(sample_end);
-
-	return { r_start, r_end };
-}
-
-std::vector<double> RadiusEstimator::sampleRadiusProfile(
-		const Bone &bone,
-		const SparseOctree &octree,
-		int num_samples) {
-	if (num_samples <= 2) {
-		num_samples = 20; // Default for continuous profile sampling
-	}
-
-	std::vector<double> radius_profile;
-	radius_profile.reserve(num_samples);
-
-	// Sample radius at points along the full bone length
-	for (int i = 0; i < num_samples; ++i) {
-		double t = static_cast<double>(i) / (num_samples - 1);
-		Vec3d sample_point = bone.start + t * (bone.end - bone.start);
-
-		// Get distance to nearest mesh vertex (this is our radius estimate)
-		double radius = octree.nearestDistance(sample_point);
-		radius_profile.push_back(radius);
-	}
-
-	return radius_profile;
-}
-
-std::vector<double> RadiusEstimator::estimateAllRadii(
-		const Skeleton &skeleton,
-		const MatXd &mesh_V) {
-	// Build octree once for all bones
-	SparseOctree octree;
-	octree.build(mesh_V);
-
-	std::vector<double> radii;
-	radii.reserve(skeleton.getBoneCount());
-
-	for (const Bone &bone : skeleton.bones) {
-		double radius = estimateRadius(bone, octree);
-		radii.push_back(radius);
-	}
-
-	std::cout << "Estimated radii for " << std::to_string(skeleton.getBoneCount()) << " bones" << std::endl;
-
-	return radii;
 }
 
 } // namespace tool_cloth_dynamics

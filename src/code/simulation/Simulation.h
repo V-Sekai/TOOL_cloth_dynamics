@@ -36,7 +36,6 @@
 #include "../engine/Timer.h"
 #include "../engine/UtilityFunctions.h"
 #include "AttachmentSpring.h"
-#include "CapsuleGenerator.h"
 #include "Constraint.h"
 #include "FixedPoint.h"
 #include "Particle.h"
@@ -181,7 +180,6 @@ public:
 		VecXd dL_dxfixed;
 		VecXd dL_dxfixed_accum;
 		std::vector<std::pair<int, double>> dL_dmu;
-		VecXd dL_dcapsule_params; // Gradient w.r.t. capsule parameters [r_top, r_bottom, height]
 		VecXd dL_dgarment_anchor_params; // Gradient w.r.t. garment anchor parameters [x,y,z,stiffness]
 		int badMatrixCounter;
 		int goodMatrixCounter;
@@ -208,7 +206,6 @@ public:
 		.dL_dk_pertype = { 0.0, 0.0, 0.0, 0.0 },
 		.dL_dsplines = {},
 		.dL_dmu = { { 0, 0 } },
-		.dL_dcapsule_params = VecXd(0),
 		.badMatrixCounter = 0,
 		.goodMatrixCounter = 0,
 		.loss = 0,
@@ -235,7 +232,6 @@ public:
 		bool dL_dmu;
 		bool dL_dx0;
 		bool dL_dwindFactor;
-		bool dL_dcapsule_params; // Optimize capsule parameters
 		bool dL_dgarment_anchor_params; // Optimize garment anchor parameters
 		double forwardAccuracyLevel;
 		double backwardAccuracyLevel;
@@ -484,10 +480,6 @@ public:
 	std::vector<VecXd> perstepTrajectory, perStepGradient;
 
 	std::vector<Primitive *> primitives, allPrimitivesToRender;
-
-	// Skeleton-based collision system
-	tool_cloth_dynamics::CapsuleRig skeletonRig;
-	bool hasSkeletonRig = false;
 
 	std::vector<std::string> log;
 	std::vector<ForwardInformation> forwardRecords, groundTruthForwardRecords,

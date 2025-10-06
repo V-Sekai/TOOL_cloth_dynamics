@@ -36,8 +36,8 @@ struct OctreeNode {
 /**
  * @brief Sparse octree for fast nearest-neighbor queries on mesh vertices
  *
- * Optimized for skeleton-to-mesh radius estimation with O(log N) performance.
- * Uses LCRS (Left-Child Right-Sibling) structure to minimize memory usage.
+ * Uses LCRS (Left-Child Right-Sibling) structure to minimize memory usage
+ * and enable efficient nearest neighbor searches.
  */
 class SparseOctree {
 public:
@@ -104,55 +104,6 @@ private:
 			int &leaf_nodes,
 			int &max_depth,
 			int current_depth = 0) const;
-};
-
-/**
- * @brief Radius estimation utilities using sparse octree
- */
-class RadiusEstimator {
-public:
-	/**
-	 * @brief Estimate radius for a bone using mesh proximity
-	 *
-	 * @param bone Bone structure
-	 * @param octree Pre-built octree for mesh
-	 * @param num_samples Number of samples along bone (default: 10)
-	 * @return Estimated radius (median of samples)
-	 */
-	static double estimateRadius(
-			const struct Bone &bone,
-			const SparseOctree &octree,
-			int num_samples = 10);
-
-	/**
-	 * @brief Estimate taper for a bone (different radii at start/end)
-	 *
-	 * @param bone Bone structure
-	 * @param octree Pre-built octree for mesh
-	 * @return Pair of (radius_start, radius_end)
-	 */
-	static std::pair<double, double> estimateTaper(
-			const struct Bone &bone,
-			const SparseOctree &octree);
-
-	/**
-	 * @brief Sample radius values along the entire bone length for continuous profiles
-	 */
-	static std::vector<double> sampleRadiusProfile(
-			const struct Bone &bone,
-			const SparseOctree &octree,
-			int num_samples = 20);
-
-	/**
-	 * @brief Estimate radii for all bones in skeleton
-	 *
-	 * @param skeleton Input skeleton
-	 * @param mesh_V Mesh vertices for proximity estimation
-	 * @return Vector of estimated radii per bone
-	 */
-	static std::vector<double> estimateAllRadii(
-			const struct Skeleton &skeleton,
-			const MatXd &mesh_V);
 };
 
 } // namespace tool_cloth_dynamics

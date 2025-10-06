@@ -186,6 +186,22 @@ Simulation::FabricConfiguration OptimizationTaskConfigurations::sock482 = {
 	//        .name =  "remeshed/sock482.obj",
 };
 
+Simulation::FabricConfiguration OptimizationTaskConfigurations::avatarFabric{
+	.clothDimX = 1,
+	.clothDimY = 1,
+	.k_stiff_stretching = 250,
+	.k_stiff_bending = 0.05,
+	.gridNumX = 0,
+	.gridNumY = 0,
+	.density = 0.324,
+	.keepOriginalScalePoint = false,
+	.isModel = false, // Create no cloth simulation - just load garment as target
+	.custominitPos = false,
+	.fabricIdx = FabricEnumArray::AGENT_HAT579, // Use existing fabric type for garments
+	.color = COLOR_IBM_GOLD20,
+	.name = "garments/jumpsuit_dense/garment.obj", // Garment mesh as target for capsule fitting
+};
+
 Simulation::SceneConfiguration OptimizationTaskConfigurations::hatScene = {
 	.fabric = agenthat579,
 	.orientation = Orientation::FRONT,
@@ -450,14 +466,6 @@ Simulation::TaskConfiguration OptimizationTaskConfigurations::demoDress = {
 	.lossType = LossType::DRESS_ANGLE
 };
 
-// Skeleton test demo - optimizes capsule fit to avatar mesh
-static Simulation::TaskConfiguration demoSkeletonTestConfig = {
-	.scene = OptimizationTaskConfigurations::hatScene, // Use hatScene as base (has no fabric)
-	.hasGroundtruth = false,
-	.generateGroundtruthSimulation = false,
-	.lossType = LossType::CAPSULE_FIT
-};
-
 std::map<int, Simulation::TaskConfiguration>
 		OptimizationTaskConfigurations::demoNumToConfigMap = {
 			{ DEMO_WIND, OptimizationTaskConfigurations::demoWInd },
@@ -468,7 +476,6 @@ std::map<int, Simulation::TaskConfiguration>
 			{ DEMO_WEAR_SOCK, OptimizationTaskConfigurations::demoSock },
 			{ DEMO_SLOPE_PERF, OptimizationTaskConfigurations::demoSlope },
 			{ DEMO_DRESS_TWIRL, OptimizationTaskConfigurations::demoDress },
-			{ DEMO_SKELETON_TEST, demoSkeletonTestConfig },
 		};
 
 std::vector<Simulation::SceneConfiguration>
