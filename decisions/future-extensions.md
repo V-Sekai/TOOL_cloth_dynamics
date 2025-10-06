@@ -33,7 +33,7 @@ public:
     );
 
     // Procedural element generation
-    static VRMSpringBoneConfig generateAttachments(
+    static std::vector<std::string> generateAttachments(
         const Skeleton& skeleton,
         const MatrixXd& mesh_vertices,
         const MatrixXi& mesh_faces,
@@ -70,8 +70,7 @@ Skeleton retargetSkeleton(const Skeleton& source, const Skeleton& target_templat
 // Combined loss function
 double total_loss = w1 * coverage_loss +
                    w2 * skeleton_plausibility +
-                   w3 * spring_bone_stability +
-                   w4 * retargeting_constraints;  // Bone length preservation
+                   w3 * retargeting_constraints;  // Bone length preservation
 
 // Gradient computation
 MatrixXd gradients = computeGradients(total_loss, parameters);

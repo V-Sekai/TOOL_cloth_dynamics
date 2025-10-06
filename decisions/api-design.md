@@ -78,11 +78,6 @@ public:
     void addToSimulation(Simulation* sim);
     void pinGarmentToCapsules(Simulation* sim, double pin_distance = 0.05);
 
-    // Asset pairing validation
-    static bool validateAssetPairing(
-        const std::string& skeleton_path,
-        const std::string& mesh_path);
-
     // Accessors
     const Skeleton& getSkeleton() const;
     const std::vector<std::unique_ptr<TaperedCapsule>>& getCapsules() const;
@@ -97,35 +92,7 @@ public:
 - **Cloth Attachment**: Provides automatic garment pinning
 - **Data Consistency**: Maintains bone-to-capsule correspondence
 
-### SpringBoneExtender Class
 
-Extends basic rigs with procedural animation chains for dynamic elements.
-
-**Primary Interface:**
-```cpp
-class SpringBoneExtender {
-public:
-    // Configuration structure
-    struct Config {
-        int subdivisions_per_bone = 3;
-        double taper_factor = 0.9;
-        double spring_stiffness = 100.0;
-        double spring_damping = 0.5;
-    };
-
-    // Basic extension
-    static CapsuleRig extend(const CapsuleRig& base, const Config& cfg);
-
-    // VRM-compatible extension
-    static CapsuleRig extendWithVRMSpringBones(
-        const CapsuleRig& base,
-        const VRMSpringBoneConfig& vrm_config);
-};
-```
-
-**Extension Modes:**
-- **Standard**: Generic procedural animation chains
-- **VRM Compatible**: VRM specification-compliant spring bones
 
 ## Error Handling
 
@@ -138,10 +105,6 @@ public:
 **Data Validation Errors:**
 - `std::invalid_argument`: Malformed skeleton data, invalid topology
 - **Recovery**: Check skeleton validity with `isValid()` methods
-
-**Asset Pairing Errors:**
-- `std::runtime_error`: Mismatched skeleton/mesh files
-- **Recovery**: Use `validateAssetPairing()` before generation
 
 ## Memory Management
 

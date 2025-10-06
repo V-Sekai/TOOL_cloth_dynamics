@@ -40,9 +40,6 @@ l 2 4  # Bone: spine → right shoulder
 
 ### Directory Organization
 
-**Asset Pairing Principle**:
-Skeleton and mesh files must be co-located to ensure topological compatibility. This enforces consistent coordinate systems and prevents mismatched assets.
-
 **Recommended Structure**:
 ```
 assets/
@@ -51,11 +48,6 @@ assets/
 ├── templates/         # Reference skeletons
 └── animations/        # Motion data
 ```
-
-**Pairing Constraints**:
-- Skeleton and mesh files in same directory are considered paired
-- Topology must be compatible for cloth-skeleton interactions
-- Coordinate systems should be aligned
 
 ### Extended OBJ Format
 

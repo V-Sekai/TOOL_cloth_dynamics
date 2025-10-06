@@ -3,7 +3,6 @@
 #include "../engine/Constants.h"
 #include "CapsuleGenerator.h"
 #include "Simulation.h"
-#include "SpringBoneExtender.h"
 #include <string>
 
 namespace tool_cloth_dynamics {
@@ -155,42 +154,6 @@ struct PerformanceTestDemo {
 };
 
 /**
- * @brief Spring bone demo: Hair and skirt physics
- *
- * Demonstrates VRM Spring Bone extension for secondary animation.
- */
-struct SpringBoneDemo {
-	static Simulation::SceneConfiguration create() {
-		Simulation::SceneConfiguration config;
-
-		config.name = "Spring_Bone_Hair_Skirt_Demo";
-		config.skeletonPath = "src/assets/meshes/avatars/FoxGirl/skeleton.obj";
-		config.fabric.name = "garments/LCL_Skirt_DressEvening_003/garment.obj";
-		config.primitiveConfig = SKELETON_WITH_SPRING_BONES;
-
-		// Enable spring bone extensions
-		config.useSpringBones = true;
-		config.springBoneSubdivisions = 4; // More segments for smoother motion
-		config.springBoneTaperFactor = 0.85; // More aggressive tapering
-
-		// Physics for dynamic motion
-		config.timeStep = 1.0 / 60.0;
-		config.stepNum = 600; // 10 seconds for full spring motion
-
-		// Wind for spring bone motion
-		config.windConfig = WindConfig::WIND_SIN;
-		config.windEnabled = true;
-
-		// Fabric settings for flowing garments
-		config.fabric.k_stiff_stretching = 120.0; // More flexible
-		config.fabric.k_stiff_bending = 0.005; // Lower bending stiffness
-		config.fabric.density = 0.1; // Light fabric
-
-		return config;
-	}
-};
-
-/**
  * @brief Batch processing demo: Multiple assets
  *
  * Demonstrates processing multiple skeleton-mesh pairs in sequence.
@@ -271,8 +234,7 @@ std::string validateDemoAssets();
  * @brief Additional scene configuration enums for skeleton demos
  */
 enum SkeletonPrimitiveConfiguration {
-	SKELETON_CAPSULES = 100, // Load capsules from skeleton.obj
-	SKELETON_WITH_SPRING_BONES = 101 // Load skeleton + spring bone extensions
+	SKELETON_CAPSULES = 100 // Load capsules from skeleton.obj
 };
 
 } // namespace tool_cloth_dynamics

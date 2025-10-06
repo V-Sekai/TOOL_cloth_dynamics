@@ -43,7 +43,7 @@ r_bone = median({distance(sample_i, nearest_mesh_vertex) | i ∈ [0, n_samples)}
 
 **Primary Approach: Smooth Taper**
 
-Create natural limb shapes with continuous radius transitions using smoothstep interpolation, reducing clipping issues during animation for complex geometries like spring bones.
+Create natural limb shapes with continuous radius transitions using smoothstep interpolation, reducing clipping issues during animation for complex geometries.
 
 **Formula:**
 
@@ -230,69 +230,6 @@ public:
 - **Collision Integration**: Leverages existing capsule collision system
 - **Bone-Based Anchoring**: Direct mapping from skeleton bones to cloth anchors
 
-### Spring Bone Animation
-
-Procedural animation system for dynamic elements using simplified spring-damper mechanics.
-
-#### Animation Model
-
-**Hybrid System:**
-
-```
-Primary Animation → Control Signals → Spring Chain → Secondary Motion
-       ↓                ↓              ↓              ↓
-   Base motion     Stiffness/damping  Hierarchical   Enhanced realism
-   (skeleton)      parameters        chains         (hair, cloth)
-```
-
-**Motion Computation:**
-
-```cpp
-Vec3d computeProceduralDisplacement(
-    const Vec3d& rest_position,
-    const Vec3d& parent_displacement,
-    double stiffness,
-    double damping,
-    double time_step
-) {
-    // Animation-driven target (not physics-based)
-    Vec3d target = computeAnimationTarget(rest_position);
-
-    // Simplified spring-damper (animation-centric)
-    Vec3d displacement = target - parent_displacement;
-    Vec3d damped = damping * previous_displacement +
-                   (1 - damping) * displacement * stiffness;
-
-    return damped * time_step;
-}
-```
-
-#### Chain Subdivision
-
-**Algorithm:** Convert single bone into hierarchical animation chain.
-
-**Process:**
-
-1. Subdivide bone into N segments
-2. Create capsule for each segment
-3. Establish parent-child relationships
-4. Apply tapering and parameter inheritance
-
-**Parameters:**
-
-- `num_subdivisions`: Number of animation segments (default: 3)
-- `taper_factor`: Radius reduction per segment (default: 0.9)
-- `stiffness`: Base animation stiffness (default: 100.0)
-- `damping`: Motion decay coefficient (default: 0.95)
-
-#### Key Characteristics
-
-**Animation-Centric Design:**
-
-- **Not Physics**: Driven by animation curves, not force equations
-- **Procedural Enhancement**: Adds secondary motion to primary animation
-- **Performance Optimized**: Lightweight compared to rigid body simulation
-- **Hierarchical**: Tree structure enables complex motion propagation
 
 ### Skeleton Retargeting
 

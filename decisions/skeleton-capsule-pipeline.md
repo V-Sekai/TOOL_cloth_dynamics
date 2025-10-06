@@ -12,8 +12,7 @@ Based on code analysis and practical requirements for cloth simulation:
 - **Radius Estimation**: Mesh proximity with sparse octree (handles non-standard anatomy)
 - **Taper Calculation**: C³ septic interpolation (jerk minimization, smooth transitions)
 - **Garment Attachment**: Proximity-based pinning (implemented, reliable for cloth draping)
-- **Spring Bones**: Animation-centric model (lightweight, real-time performance)
-- **Optimization**: Template-based fitting (production-ready, asset pairing)
+- **Optimization**: Template-based fitting (production-ready)
 - **Skeleton Retargeting**: Source-as-mesh optimization (VRMA-to-cloth compatibility)
 
 ### Testing Infrastructure
@@ -36,8 +35,6 @@ Based on code analysis and practical requirements for cloth simulation:
 - [**Demo Scenes**](demo-scenes.md) - Standard test cases and expected behaviors
 
 ### Advanced Topics
-- [**Spring Bone Optimization**](spring-bone-optimization.md) - Procedural animation systems
-- [**Spring Bone Testing**](spring-bone-testing.md) - Validation and quality metrics
 - [**Loss Functions**](loss-functions.md) - Optimization objectives and constraints
 
 ### Appendices
