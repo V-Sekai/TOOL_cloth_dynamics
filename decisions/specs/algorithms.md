@@ -352,6 +352,5 @@ double computeRetargetingLoss(
 - Anatomical plausibility
 
 **Applications:**
-- VRMA-to-cloth skeleton compatibility
 - Cross-character animation transfer
 - Skeleton adaptation for cloth simulation

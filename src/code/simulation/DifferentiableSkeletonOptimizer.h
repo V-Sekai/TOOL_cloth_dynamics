@@ -3,8 +3,6 @@
 #include "CapsuleGenerator.h"
 #include "SkeletonLoader.h"
 #include "SparseOctree.h"
-#include <LBFGS.h>
-#include <LBFGSpp/Param.h>
 #include <Eigen/Dense>
 #include <memory>
 #include <vector>

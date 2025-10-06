@@ -13,7 +13,7 @@ Based on code analysis and practical requirements for cloth simulation:
 - **Taper Calculation**: C³ septic interpolation (jerk minimization, smooth transitions)
 - **Garment Attachment**: Proximity-based pinning (implemented, reliable for cloth draping)
 - **Optimization**: Template-based fitting (production-ready)
-- **Skeleton Retargeting**: Source-as-mesh optimization (VRMA-to-cloth compatibility)
+- **Skeleton Retargeting**: Source-as-mesh optimization
 
 ### Testing Infrastructure
 - **Dataset Integration**: Large-scale testing framework (validation, benchmarking, edge cases)
@@ -21,7 +21,7 @@ Based on code analysis and practical requirements for cloth simulation:
 ## Table of Contents
 
 ### Core Concepts
-- [**System Architecture**](system-architecture.md) - Pipeline design and component relationships
+- [**System Architecture**](../system-architecture.md) - Pipeline design and component relationships
 - [**Data Structures**](data-structures.md) - Bone, Skeleton, and CapsuleRig specifications
 - [**Pipeline Stages**](pipeline-stages.md) - Forward and inverse transformation processes
 

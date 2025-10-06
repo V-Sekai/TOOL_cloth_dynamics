@@ -1,12 +1,14 @@
 #include "DifferentiableSkeletonOptimizer.h"
 #include "CapsuleGenerator.h"
+#include <LBFGS.h>
+#include <LBFGSpp/Param.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 
 namespace tool_cloth_dynamics {
 
-// L-BFGS objective function for skeleton optimization
+// Differentiable objective function for skeleton optimization
 class SkeletonOptimizationObjective {
 private:
 	const Eigen::MatrixXd &target_mesh_vertices_;
@@ -21,12 +23,12 @@ public:
 			const Skeleton &template_skeleton) :
 			target_mesh_vertices_(mesh_vertices), target_mesh_faces_(mesh_faces), template_skeleton_(template_skeleton), current_skeleton_(template_skeleton) {}
 
-	// L-BFGS objective function: f(x) where x is flattened joint positions
+	// L-BFGS objective function with analytical gradients
 	double operator()(const Eigen::VectorXd &x, Eigen::VectorXd &grad) {
 		// Reconstruct skeleton from optimization variables
 		updateSkeletonFromVariables(x);
 
-		// Compute total loss
+		// Compute total loss and gradients
 		double coverage_loss = DifferentiableSkeletonOptimizer::computeCoverageLoss(
 				current_skeleton_, target_mesh_vertices_, target_mesh_faces_);
 		double plausibility_loss = DifferentiableSkeletonOptimizer::computePlausibilityLoss(
@@ -34,8 +36,11 @@ public:
 
 		double total_loss = coverage_loss + plausibility_loss;
 
-		// Compute gradients (simplified finite differences for now)
-		computeGradients(x, grad);
+		// Compute analytical gradients
+		Eigen::VectorXd coverage_grad = computeCoverageLossGradient(current_skeleton_, target_mesh_vertices_, target_mesh_faces_);
+		Eigen::VectorXd plausibility_grad = computePlausibilityLossGradient(current_skeleton_);
+
+		grad = coverage_grad + plausibility_grad;
 
 		return total_loss;
 	}
@@ -64,24 +69,129 @@ private:
 		}
 	}
 
-	void computeGradients(const Eigen::VectorXd &x, Eigen::VectorXd &grad) {
-		const double eps = 1e-6;
-		grad.resize(x.size());
-		grad.setZero();
+	Eigen::VectorXd computeCoverageLossGradient(const Skeleton &skeleton,
+			const Eigen::MatrixXd &mesh_vertices, const Eigen::MatrixXi &mesh_faces) {
+		size_t num_joints = skeleton.joints.size();
+		Eigen::VectorXd grad = Eigen::VectorXd::Zero(3 * num_joints);
 
-		// Finite differences for gradients
-		Eigen::VectorXd x_plus = x;
-		Eigen::VectorXd dummy_grad(x.size()); // Temporary gradient vector
-		for (int i = 0; i < x.size(); ++i) {
-			x_plus[i] += eps;
-			double f_plus = (*this)(x_plus, dummy_grad); // Don't need grad here
+		size_t sample_count = std::min(size_t(100), static_cast<size_t>(mesh_vertices.cols()));
 
-			x_plus[i] -= 2 * eps;
-			double f_minus = (*this)(x_plus, dummy_grad);
+		for (size_t i = 0; i < sample_count; ++i) {
+			Vec3d mesh_point = mesh_vertices.col(i);
 
-			grad[i] = (f_plus - f_minus) / (2 * eps);
-			x_plus[i] = x[i]; // Reset
+			// Find minimum distance to any bone and its gradient
+			double min_distance = std::numeric_limits<double>::max();
+			Vec3d closest_point;
+			size_t best_bone_idx = 0;
+
+			for (size_t b = 0; b < skeleton.bones.size(); ++b) {
+				const auto &bone = skeleton.bones[b];
+				// Compute distance from point to bone segment
+				Vec3d bone_axis = bone.getAxis();
+				Vec3d to_point = mesh_point - bone.start;
+				double projection = to_point.dot(bone_axis);
+				double bone_length = bone.getLength();
+
+				// Clamp projection to bone segment
+				projection = std::max(0.0, std::min(bone_length, projection));
+
+				// Compute closest point on bone
+				Vec3d closest = bone.start + projection * bone_axis;
+				double distance = (mesh_point - closest).norm();
+
+				if (distance < min_distance) {
+					min_distance = distance;
+					closest_point = closest;
+					best_bone_idx = b;
+				}
+			}
+
+			// Compute gradient of squared distance w.r.t. joint positions
+			if (min_distance > 0) {
+				const auto &bone = skeleton.bones[best_bone_idx];
+				Vec3d diff = mesh_point - closest_point;
+				Vec3d normalized_diff = diff / min_distance;
+
+				// Find which joints this bone connects
+				auto start_it = std::find(skeleton.joints.begin(), skeleton.joints.end(), bone.start);
+				auto end_it = std::find(skeleton.joints.begin(), skeleton.joints.end(), bone.end);
+
+				if (start_it != skeleton.joints.end() && end_it != skeleton.joints.end()) {
+					size_t start_idx = start_it - skeleton.joints.begin();
+					size_t end_idx = end_it - skeleton.joints.end();
+
+					// Gradient contribution: 2 * distance * d(distance)/d(joint_pos)
+					// d(distance)/d(joint_pos) = -normalized_diff * d(closest_point)/d(joint_pos)
+					double grad_coeff = 2.0 * min_distance;
+
+					// For start joint
+					grad[3 * start_idx] += grad_coeff * normalized_diff[0];
+					grad[3 * start_idx + 1] += grad_coeff * normalized_diff[1];
+					grad[3 * start_idx + 2] += grad_coeff * normalized_diff[2];
+
+					// For end joint (similar but with bone axis scaling)
+					grad[3 * end_idx] += grad_coeff * normalized_diff[0];
+					grad[3 * end_idx + 1] += grad_coeff * normalized_diff[1];
+					grad[3 * end_idx + 2] += grad_coeff * normalized_diff[2];
+				}
+			}
 		}
+
+		return grad / sample_count;
+	}
+
+	Eigen::VectorXd computePlausibilityLossGradient(const Skeleton &skeleton) {
+		size_t num_joints = skeleton.joints.size();
+		Eigen::VectorXd grad = Eigen::VectorXd::Zero(3 * num_joints);
+
+		// Plausibility loss gradients (simplified - only bone length constraints)
+		for (const auto &bone : skeleton.bones) {
+			double length = bone.getLength();
+
+			// Penalize very short or very long bones
+			double length_penalty = 0.0;
+			if (length < 0.01) {
+				length_penalty = 1000.0;
+			} else if (length > 2.0) {
+				length_penalty = (length - 2.0) * 10.0;
+			}
+
+			// Find joint indices
+			auto start_it = std::find(skeleton.joints.begin(), skeleton.joints.end(), bone.start);
+			auto end_it = std::find(skeleton.joints.begin(), skeleton.joints.end(), bone.end);
+
+			if (start_it != skeleton.joints.end() && end_it != skeleton.joints.end()) {
+				size_t start_idx = start_it - skeleton.joints.begin();
+				size_t end_idx = end_it - skeleton.joints.end();
+
+				// Gradient of length penalty w.r.t. joint positions
+				if (length > 1e-6) {
+					Vec3d bone_dir = (bone.end - bone.start) / length;
+
+					// d(length_penalty)/d(start_joint) = -bone_dir * d(length_penalty)/d(length)
+					// d(length_penalty)/d(end_joint) = bone_dir * d(length_penalty)/d(length)
+
+					double d_penalty_d_length = 0.0;
+					if (length < 0.01) {
+						d_penalty_d_length = 0.0; // Constant penalty for very short bones
+					} else if (length > 2.0) {
+						d_penalty_d_length = 10.0; // Linear penalty for long bones
+					}
+
+					Vec3d grad_contrib = d_penalty_d_length * bone_dir;
+
+					grad[3 * start_idx] -= grad_contrib[0];
+					grad[3 * start_idx + 1] -= grad_contrib[1];
+					grad[3 * start_idx + 2] -= grad_contrib[2];
+
+					grad[3 * end_idx] += grad_contrib[0];
+					grad[3 * end_idx + 1] += grad_contrib[1];
+					grad[3 * end_idx + 2] += grad_contrib[2];
+				}
+			}
+		}
+
+		return grad;
 	}
 };
 
@@ -91,7 +201,7 @@ Skeleton DifferentiableSkeletonOptimizer::optimizeFromMesh(
 		const Skeleton &template_skeleton,
 		int max_iterations) {
 	std::cout << "Optimizing skeleton from mesh with " << mesh_vertices.cols()
-			  << " vertices and " << mesh_faces.cols() << " faces using L-BFGS" << std::endl;
+			  << " vertices and " << mesh_faces.cols() << " faces using analytical gradients" << std::endl;
 
 	// Set up L-BFGS parameters
 	LBFGSpp::LBFGSParam<double> param;
@@ -99,7 +209,7 @@ Skeleton DifferentiableSkeletonOptimizer::optimizeFromMesh(
 	param.max_iterations = max_iterations;
 	param.m = 10; // L-BFGS memory
 
-	// Create objective function
+	// Create differentiable objective function
 	SkeletonOptimizationObjective objective(mesh_vertices, mesh_faces, template_skeleton);
 
 	// Initialize optimization variables from template skeleton
