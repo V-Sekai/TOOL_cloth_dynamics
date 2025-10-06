@@ -275,4 +275,58 @@ bool CapsuleGenerator::validateSkeleton(const Skeleton &skeleton) {
 	return true;
 }
 
+bool CapsuleRig::exportToOBJ(const std::string &filename) const {
+	if (!isValid()) {
+		std::cerr << "Error: Invalid CapsuleRig - no capsules to export" << std::endl;
+		return false;
+	}
+
+	// Collect all vertices and faces from all capsules
+	std::vector<Vec3d> all_vertices;
+	std::vector<Vec3i> all_faces;
+	size_t vertex_offset = 0;
+
+	for (const auto &capsule : capsules) {
+		if (!capsule)
+			continue;
+
+		if (!capsule->mesh_generated) {
+			// Generate mesh if not already done
+			const_cast<TaperedCapsule *>(capsule.get())->generateMesh();
+		}
+
+		if (capsule->vertices.empty() || capsule->faces.empty()) {
+			std::cerr << "Warning: Capsule has no mesh data, skipping" << std::endl;
+			continue;
+		}
+
+		// Add vertices
+		all_vertices.insert(all_vertices.end(), capsule->vertices.begin(), capsule->vertices.end());
+
+		// Add faces with adjusted indices
+		for (const Vec3i &face : capsule->faces) {
+			Vec3i adjusted_face(
+					face[0] + vertex_offset,
+					face[1] + vertex_offset,
+					face[2] + vertex_offset);
+			all_faces.push_back(adjusted_face);
+		}
+
+		vertex_offset += capsule->vertices.size();
+	}
+
+	if (all_vertices.empty() || all_faces.empty()) {
+		std::cerr << "Error: No valid mesh data found in any capsule" << std::endl;
+		return false;
+	}
+
+	// Export combined mesh to OBJ file
+	MeshFileHandler::writeOBJFile(filename.c_str(), all_vertices, all_faces);
+
+	std::cout << "Exported " << capsules.size() << " capsules to " << filename
+			  << " (" << all_vertices.size() << " vertices, " << all_faces.size() << " faces)" << std::endl;
+
+	return true;
+}
+
 } // namespace tool_cloth_dynamics

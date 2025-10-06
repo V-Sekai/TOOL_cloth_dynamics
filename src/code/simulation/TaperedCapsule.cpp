@@ -1,4 +1,5 @@
 #include "TaperedCapsule.h"
+#include "../engine/MeshFileHandler.h"
 #include <algorithm>
 #include <cmath>
 
@@ -282,6 +283,22 @@ Mat3x3d TaperedCapsule::buildRotationMatrix(const Vec3d &from, const Vec3d &to) 
 			(1.0 - std::cos(rotation_angle)) * K * K;
 
 	return rotation;
+}
+
+bool TaperedCapsule::exportToOBJ(const std::string &filename) const {
+	if (!mesh_generated) {
+		// Generate mesh if not already done
+		const_cast<TaperedCapsule *>(this)->generateMesh();
+	}
+
+	if (vertices.empty() || faces.empty()) {
+		std::cerr << "Error: No mesh data available for OBJ export" << std::endl;
+		return false;
+	}
+
+	// Use the new writeOBJFile method from MeshFileHandler
+	MeshFileHandler::writeOBJFile(filename.c_str(), vertices, faces);
+	return true;
 }
 
 } // namespace tool_cloth_dynamics

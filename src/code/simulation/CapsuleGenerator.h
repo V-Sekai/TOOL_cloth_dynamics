@@ -110,6 +110,16 @@ public:
 	bool isValid() const { return !capsules.empty(); }
 
 	/**
+	 * @brief Export all capsules in the rig to OBJ files
+	 *
+	 * Creates separate OBJ files for each capsule, named with capsule index.
+	 *
+	 * @param base_filename Base filename (will be suffixed with capsule index)
+	 * @return true if all exports successful
+	 */
+	bool exportToOBJ(const std::string &base_filename) const;
+
+	/**
 	 * @brief Default constructor (public for Simulation member usage)
 	 */
 	CapsuleRig() = default;

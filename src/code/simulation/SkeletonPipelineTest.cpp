@@ -51,11 +51,11 @@ bool SkeletonPipelineTest::testSkeletonLoading() {
 
 		// Validate skeleton
 		if (!skeleton.isValid()) {
-			std::cout << "❌ Skeleton validation failed" << std::endl;
+			std::cout << "	Skeleton validation failed" << std::endl;
 			return false;
 		}
 
-		std::cout << "✅ Skeleton loaded: " << skeleton.getBoneCount() << " bones, "
+		std::cout << "	Skeleton loaded: " << skeleton.getBoneCount() << " bones, "
 				  << skeleton.getJointCount() << " joints" << std::endl;
 
 		// Test bone properties
@@ -70,7 +70,7 @@ bool SkeletonPipelineTest::testSkeletonLoading() {
 					  << "," << center.z() << ")" << std::endl;
 
 			if (length < 1e-10) {
-				std::cout << "❌ Degenerate bone detected" << std::endl;
+				std::cout << "	Degenerate bone detected" << std::endl;
 				return false;
 			}
 		}
@@ -78,7 +78,7 @@ bool SkeletonPipelineTest::testSkeletonLoading() {
 		return true;
 
 	} catch (const std::exception &e) {
-		std::cout << "❌ Exception in skeleton loading: " << e.what() << std::endl;
+		std::cout << "	Exception in skeleton loading: " << e.what() << std::endl;
 		return false;
 	}
 }
@@ -104,24 +104,33 @@ bool SkeletonPipelineTest::testCapsuleGeneration() {
 		CapsuleRig rig = CapsuleRig::generate(skeleton, test_radius);
 
 		if (!rig.isValid()) {
-			std::cout << "❌ Generated rig is invalid" << std::endl;
+			std::cout << "	Generated rig is invalid" << std::endl;
 			return false;
 		}
 
 		if (rig.getCapsuleCount() != skeleton.getBoneCount()) {
-			std::cout << "❌ Capsule count mismatch: expected " << skeleton.getBoneCount()
+			std::cout << "	Capsule count mismatch: expected " << skeleton.getBoneCount()
 					  << ", got " << rig.getCapsuleCount() << std::endl;
 			return false;
 		}
 
-		std::cout << "✅ Generated " << rig.getCapsuleCount() << " capsules" << std::endl;
+		std::cout << "	Generated " << rig.getCapsuleCount() << " capsules" << std::endl;
+
+		// Export capsules to OBJ file for validation
+		std::string output_filename = "output/test_capsules.obj";
+		if (rig.exportToOBJ(output_filename)) {
+			std::cout << "	Exported capsules to " << output_filename << std::endl;
+		} else {
+			std::cout << "	Failed to export capsules to OBJ" << std::endl;
+			return false;
+		}
 
 		// Verify capsule properties
 		const auto &capsules = rig.getCapsules();
 		for (size_t i = 0; i < capsules.size(); ++i) {
 			const TaperedCapsule *capsule = capsules[i].get();
 			if (!capsule) {
-				std::cout << "❌ Null capsule at index " << i << std::endl;
+				std::cout << "	Null capsule at index " << i << std::endl;
 				return false;
 			}
 
@@ -133,7 +142,7 @@ bool SkeletonPipelineTest::testCapsuleGeneration() {
 		return true;
 
 	} catch (const std::exception &e) {
-		std::cout << "❌ Exception in capsule generation: " << e.what() << std::endl;
+		std::cout << "	Exception in capsule generation: " << e.what() << std::endl;
 		return false;
 	}
 }
@@ -156,13 +165,13 @@ bool SkeletonPipelineTest::testSparseOctree() {
 		Vec3d query_point(0.0, 0.0, 0.0); // Center of cube
 		double distance = octree.nearestDistance(query_point);
 
-		std::cout << "✅ Octree built successfully" << std::endl;
+		std::cout << "	Octree built successfully" << std::endl;
 		std::cout << "  Distance from center to nearest vertex: " << distance << std::endl;
 
 		// Verify reasonable distance (should be around sqrt(3) for cube center)
 		double expected_distance = std::sqrt(3.0);
 		if (std::abs(distance - expected_distance) > 0.1) {
-			std::cout << "❌ Unexpected distance: expected ~" << expected_distance
+			std::cout << "Unexpected distance: expected ~" << expected_distance
 					  << ", got " << distance << std::endl;
 			return false;
 		}
@@ -176,7 +185,7 @@ bool SkeletonPipelineTest::testSparseOctree() {
 		return true;
 
 	} catch (const std::exception &e) {
-		std::cout << "❌ Exception in octree test: " << e.what() << std::endl;
+		std::cout << "	Exception in octree test: " << e.what() << std::endl;
 		return false;
 	}
 }
@@ -266,26 +275,26 @@ bool SkeletonPipelineTest::testRadiusEstimation() {
 
 			double estimated_radius = RadiusEstimator::estimateRadius(test_bone, octree);
 
-			std::cout << "✅ Radius estimation completed" << std::endl;
+			std::cout << "	Radius estimation completed" << std::endl;
 			std::cout << "  Expected radius: " << analytical_radius << std::endl;
 			std::cout << "  Estimated radius: " << estimated_radius << std::endl;
 
 			// Check if estimation has near-zero error (analytical case should be very accurate)
 			double error_ratio = std::abs(estimated_radius - analytical_radius) / analytical_radius;
 			if (error_ratio > 0.001) { // < 0.1% error for analytical case
-				std::cout << "❌ Radius estimation error too large: "
+				std::cout << "	Radius estimation error too large: "
 						  << (error_ratio * 100) << "% (expected < 0.1%)" << std::endl;
 				return false;
 			}
 
-			std::cout << "✅ Analytical radius recovered with " << (error_ratio * 100)
+			std::cout << "	Analytical radius recovered with " << (error_ratio * 100)
 					  << "% error (excellent accuracy)" << std::endl;
 		}
 
 		return true;
 
 	} catch (const std::exception &e) {
-		std::cout << "❌ Exception in radius estimation: " << e.what() << std::endl;
+		std::cout << "	Exception in radius estimation: " << e.what() << std::endl;
 		return false;
 	}
 }
@@ -313,7 +322,7 @@ bool SkeletonPipelineTest::testRealMeshRadiusEstimation() {
 				continue;
 			}
 
-			std::cout << "✅ Loaded mesh with " << vertices.size() << " vertices, "
+			std::cout << "	Loaded mesh with " << vertices.size() << " vertices, "
 					  << triangles.size() << " triangles" << std::endl;
 
 			// Convert to Eigen matrix format
@@ -342,16 +351,16 @@ bool SkeletonPipelineTest::testRealMeshRadiusEstimation() {
 						  << "): estimated radius = " << estimated_radius << std::endl;
 			}
 
-			std::cout << "✅ Real mesh radius estimation completed for " << mesh_path << std::endl;
+			std::cout << "	Real mesh radius estimation completed for " << mesh_path << std::endl;
 		}
 
 		// Note: We don't check specific error rates here since we don't know ground truth
 		// This test validates that the algorithm runs successfully on real data
-		std::cout << "✅ Real mesh testing completed (algorithm runs successfully on real data)" << std::endl;
+		std::cout << "	Real mesh testing completed (algorithm runs successfully on real data)" << std::endl;
 		return true;
 
 	} catch (const std::exception &e) {
-		std::cout << "❌ Exception in real mesh radius estimation: " << e.what() << std::endl;
+		std::cout << "	Exception in real mesh radius estimation: " << e.what() << std::endl;
 		return false;
 	}
 }
@@ -364,16 +373,16 @@ bool SkeletonPipelineTest::testDemoScenes() {
 		Simulation::SceneConfiguration demo_config = SkeletonDemoScenes::FoxGirlJumpsuitDemo::create();
 
 		if (demo_config.name.empty()) {
-			std::cout << "❌ Demo configuration name is empty" << std::endl;
+			std::cout << "	Demo configuration name is empty" << std::endl;
 			return false;
 		}
 
 		if (demo_config.skeletonPath.empty()) {
-			std::cout << "❌ Skeleton path is empty" << std::endl;
+			std::cout << "	Skeleton path is empty" << std::endl;
 			return false;
 		}
 
-		std::cout << "✅ Demo scene configured: " << demo_config.name << std::endl;
+		std::cout << "	Demo scene configured: " << demo_config.name << std::endl;
 		std::cout << "  Skeleton path: " << demo_config.skeletonPath << std::endl;
 		std::cout << "  Fabric: " << demo_config.fabric.name << std::endl;
 		std::cout << "  Simulation time: " << demo_config.stepNum << " steps at "
@@ -382,16 +391,16 @@ bool SkeletonPipelineTest::testDemoScenes() {
 		// Test expected behavior description
 		std::string behavior = SkeletonDemoScenes::FoxGirlJumpsuitDemo::getExpectedBehavior();
 		if (behavior.empty()) {
-			std::cout << "❌ Expected behavior description is empty" << std::endl;
+			std::cout << "	Expected behavior description is empty" << std::endl;
 			return false;
 		}
 
-		std::cout << "✅ Expected behavior documented" << std::endl;
+		std::cout << "	Expected behavior documented" << std::endl;
 
 		return true;
 
 	} catch (const std::exception &e) {
-		std::cout << "❌ Exception in demo scene test: " << e.what() << std::endl;
+		std::cout << "	Exception in demo scene test: " << e.what() << std::endl;
 		return false;
 	}
 }
@@ -421,7 +430,7 @@ bool SkeletonPipelineTest::runAllTests() {
 		std::cout << "🎉 All tests passed! Skeleton-capsule pipeline is working correctly." << std::endl;
 		return true;
 	} else {
-		std::cout << "❌ Some tests failed. Please check the implementation." << std::endl;
+		std::cout << "	Some tests failed. Please check the implementation." << std::endl;
 		return false;
 	}
 }

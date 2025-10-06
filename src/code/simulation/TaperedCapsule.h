@@ -93,7 +93,7 @@ public:
 			Vec3d &closest_point,
 			Vec3d &surface_normal) const;
 
-private:
+public:
 	/**
 	 * @brief Generate triangle mesh for visualization
 	 * Adapted from Godot's TaperedCapsuleMesh
@@ -146,6 +146,16 @@ private:
 	 * @return 3x3 rotation matrix
 	 */
 	Mat3x3d buildRotationMatrix(const Vec3d &from, const Vec3d &to) const;
+
+	/**
+	 * @brief Export tapered capsule mesh to OBJ file
+	 *
+	 * Generates mesh if not already generated, then writes to OBJ format.
+	 *
+	 * @param filename Output OBJ file path
+	 * @return true if export successful
+	 */
+	bool exportToOBJ(const std::string &filename) const;
 };
 
 } // namespace tool_cloth_dynamics

@@ -84,6 +84,37 @@ public:
 
 		return pos;
 	}
+	static void writeOBJFile(const char *filename, const std::vector<Vec3d> &posVec,
+			const std::vector<Vec3i> &triVec) {
+		// Ensure output directory exists
+		std::string filename_str(filename);
+		std::filesystem::path filepath(filename_str);
+		std::filesystem::path parent_dir = filepath.parent_path();
+		if (!parent_dir.empty()) {
+			checkFolderExistsAndCreate(parent_dir.string());
+		}
+
+		FILE *file = fopen(filename, "w");
+		if (!file) {
+			std::cerr << "Cannot open file for writing: " << filename << std::endl;
+			return;
+		}
+
+		// Write vertices
+		for (const auto &pos : posVec) {
+			fprintf(file, "v %f %f %f\n", pos[0], pos[1], pos[2]);
+		}
+
+		// Write faces (OBJ uses 1-based indexing)
+		for (const auto &tri : triVec) {
+			fprintf(file, "f %d %d %d\n", tri[0] + 1, tri[1] + 1, tri[2] + 1);
+		}
+
+		fclose(file);
+		std::printf("Finished writing OBJ file %s: %zu vertices, %zu triangles\n",
+				filename, posVec.size(), triVec.size());
+	}
+
 	static void loadOBJFile(const char *filename, std::vector<Vec3d> &posVec,
 			std::vector<Vec3i> &triVec) {
 		FILE *file = fopen(filename, "rb");
