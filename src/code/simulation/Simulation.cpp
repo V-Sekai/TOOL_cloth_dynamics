@@ -3539,12 +3539,10 @@ double Simulation::calculateLossAndGradient(LossType &lossType,
 		}
 
 		case (CAPSULE_FIT): {
-			std::printf("[CAPSULE_FIT] Frame %d: Loss calculation started\n", idx);
 			if (!hasSkeletonRig) {
 				std::printf("WARNING: CAPSULE_FIT loss requires skeleton rig but none loaded\n");
 				break;
 			}
-			std::printf("[CAPSULE_FIT] Frame %d: Skeleton rig available with %zu capsules\n", idx, skeletonRig.getCapsuleCount());
 
 			// Capsule fit: 6 parameters per capsule (center_x, center_y, center_z, radius_top, radius_bottom, height)
 			const int params_per_capsule = 6;

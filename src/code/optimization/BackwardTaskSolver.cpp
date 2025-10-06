@@ -36,11 +36,18 @@ void BackwardTaskSolver::solveDemo(
 		Simulation *system,
 		const std::function<void(const std::string &)> &setTextBoxCB, int demoNum,
 		bool isRandom, int srandSeed) {
-	// Special case for skeleton_test - doesn't need simulation/optimization framework
+	// Special case for skeleton_test - runs optimization demo, not just tests
 	if (demoNum == Demos::DEMO_SKELETON_TEST) {
-		std::printf("Running skeleton-capsule pipeline tests...\n");
-		bool success = tool_cloth_dynamics::SkeletonPipelineTest::runAllTests();
-		return; // Early return - don't run normal optimization flow
+		std::printf("Running skeleton-capsule optimization demo...\n");
+		// Load skeleton capsules and run CAPSULE_FIT optimization
+		system->loadSkeletonCapsules("src/assets/meshes/avatars/FoxGirl");
+		if (system->hasSkeletonRig) {
+			std::printf("Skeleton rig loaded with %zu capsules, starting CAPSULE_FIT optimization\n", system->skeletonRig.getCapsuleCount());
+		} else {
+			std::printf("Failed to load skeleton rig for optimization\n");
+			return;
+		}
+		// Fall through to normal optimization framework
 	}
 
 	OptimizeHelper helper = getOptimizeHelper(system, demoNum);

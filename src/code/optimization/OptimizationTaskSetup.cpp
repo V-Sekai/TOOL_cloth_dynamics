@@ -281,6 +281,41 @@ void BackwardTaskSolver::setInitialConditions(
 			paramGroundtruth.k_pertype[Constraint::CONSTRAINT_TRIANGLE] = 2.0;
 			break;
 		}
+
+		case DEMO_SKELETON_TEST: {
+			// Enable CAPSULE_FIT loss optimization for skeleton capsules
+			taskInfo.dL_dcapsule_params = true;
+
+			// Initialize capsule parameters for optimization
+			// Each capsule has 6 parameters: center_x, center_y, center_z, radius_top, radius_bottom, height
+			size_t numCapsules = system->skeletonRig.getCapsuleCount();
+			const int params_per_capsule = 6;
+			paramGroundtruth.capsule_params = VecXd(numCapsules * params_per_capsule);
+
+			// Initialize with current capsule values as starting point
+			size_t param_idx = 0;
+			for (const auto &capsule_ptr : system->skeletonRig.getCapsules()) {
+				auto capsule = capsule_ptr.get();
+				if (capsule) {
+					// Center position (x, y, z)
+					paramGroundtruth.capsule_params[param_idx++] = capsule->center.x();
+					paramGroundtruth.capsule_params[param_idx++] = capsule->center.y();
+					paramGroundtruth.capsule_params[param_idx++] = capsule->center.z();
+
+					// Radius top and bottom
+					paramGroundtruth.capsule_params[param_idx++] = capsule->radius_top;
+					paramGroundtruth.capsule_params[param_idx++] = capsule->radius_bottom;
+
+					// Height
+					paramGroundtruth.capsule_params[param_idx++] = capsule->mid_height;
+				}
+			}
+
+			std::printf("Initialized capsule parameters for optimization: %zu capsules, %zu total params\n",
+					numCapsules, paramGroundtruth.capsule_params.size());
+
+			break;
+		}
 	}
 	taskInfo.paramActual = paramGroundtruth;
 }
