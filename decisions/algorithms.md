@@ -63,14 +63,7 @@ where septic(t) = 6t⁷ - 35t⁶ + 84t⁵ - 70t⁴ + 20t³
 
 - **Domain**: [0, 1] → [0, 1] with zero derivatives at boundaries
 - **Smooth Interior**: Continuous second derivatives for fluid motion
-- **Applications**: Natural limb tapering, muscle definition, spring bone chains
-
-**Continuity Options:**
-
-- **C¹ (Current)**: `smoothstep(t) = 3t² - 2t³` - Zero first derivatives at boundaries
-- **C² (Quintic)**: `smootherstep(t) = 6t⁵ - 15t⁴ + 10t³` - Zero first and second derivatives at boundaries
-- **C³ (Septic)**: `6t⁷ - 35t⁶ + 84t⁵ - 70t⁴ + 20t³` - Zero derivatives up to third order
-- **C∞ (Gaussian)**: `exp(-1/(t(1-t)))` for t ∈ (0,1) - Infinitely differentiable (but requires clamping)
+- **Applications**: Natural limb tapering, muscle definition
 
 **Benefits for Non-Standard Models:**
 
