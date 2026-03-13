@@ -1279,13 +1279,8 @@ void Simulation::step() {
 
 			if (contactEnabled) {
 				if (iterIdx == 0) {
-#ifdef USE_FCL
-					detectionInfos = collisionDetectionFCL(x_n, v_now, xnew_n_primitives,
-							v_n_primitives);
-#else
 					detectionInfos = collisionDetection(x_n, v_now, xnew_n_primitives,
 							v_n_primitives);
-#endif
 				}
 				timeSteptimer.tic("calc r");
 				collisionResults = calculateDryFrictionVector(f, detectionInfos);
@@ -1476,10 +1471,10 @@ VecXd Simulation::solveDirect(VecXd &dL_dxnew, double t_2, SpMat &dproj_dxnew_t,
 		posVec(3 * static_cast<Eigen::Index>(i) + 1) = particles[i].pos(1);
 		posVec(3 * static_cast<Eigen::Index>(i) + 2) = particles[i].pos(2);
 	}
-	(void)posVec; // reserved for future Schwarz preconditioner with PCG
+	solverBiCGSTAB.preconditioner().setPositions(posVec.data(), static_cast<int>(particles.size()));
 #endif
-	factorizeSolverPCG(P_N_T, solverPCG, "factorize solverPCG");
-	VecXd u_star = solverPCG.solve(dL_dxnew);
+	factorizeDirectSolverBiCGSTAB(P_N_T, solverBiCGSTAB, "factorize solverBiCGSTAB");
+	VecXd u_star = solverBiCGSTAB.solve(dL_dxnew);
 	timeSteptimer.toc();
 	return u_star;
 }
@@ -4550,28 +4545,6 @@ VecXd Simulation::getParticleNormals(std::vector<Triangle> mesh,
 	return normals;
 }
 
-SpMat Simulation::factorizeSolverPCG(const SpMat &A,
-		Eigen::ConjugateGradient<SpMat, Eigen::Lower, Eigen::DiagonalPreconditioner<double>> &solver,
-		const std::string &warning_msg) {
-	solver.compute(A);
-	SpMat Afixed = A;
-	double regularization = 1e-10;
-	SpMat I = SpMat(A.rows(), A.cols());
-	I.setIdentity();
-	while (solver.info() != Eigen::Success) {
-		regularization *= 10;
-		Afixed = Afixed + regularization * I;
-		solver.compute(Afixed);
-		if (regularization > 100)
-			break;
-	}
-	if (solver.info() != Eigen::Success) {
-		std::cout << "Warning: " << warning_msg << " adding " << regularization
-				  << " identities (PCG solver)" << std::endl;
-	}
-	return Afixed;
-}
-
 #ifdef USE_SCHWARZ_PRECONDITIONER
 void Simulation::ensureSchwarzTopology() {
 	if (mesh.empty() || particles.empty()) return;
@@ -4585,7 +4558,54 @@ void Simulation::ensureSchwarzTopology() {
 		triP2.push_back(t.p2_idx);
 	}
 	schwarzTopology.build(static_cast<int>(particles.size()), triP0, triP1, triP2);
-	// PCG currently uses DiagonalPreconditioner; Schwarz can be wired as PCG preconditioner later if needed.
+	solverBiCGSTAB.preconditioner().setTopology(schwarzTopology);
+}
+
+SpMat Simulation::factorizeDirectSolverBiCGSTAB(
+		const SpMat &A, Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, OmegaEngine::SchwarzPreconditionerWrapper> &BiCGSTABSolver,
+		const std::string &warning_msg) {
+	BiCGSTABSolver.compute(A);
+	SpMat Afixed = A;
+	double regularization = 1e-10;
+	SpMat I = SpMat(A.rows(), A.cols());
+	I.setIdentity();
+	while (BiCGSTABSolver.info() != Eigen::Success) {
+		regularization *= 10;
+		Afixed = Afixed + regularization * I;
+		BiCGSTABSolver.compute(Afixed);
+		if (regularization > 100)
+			break;
+	}
+	if (BiCGSTABSolver.info() != Eigen::Success) {
+		std::cout << "Warning: " << warning_msg << " adding " << regularization
+				  << " identites.(BiCGSTA solver)" << std::endl;
+	}
+	return Afixed;
+}
+#else
+SpMat Simulation::factorizeDirectSolverBiCGSTAB(
+		const SpMat &A, Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, Eigen::LeastSquareDiagonalPreconditioner<double>> &BiCGSTABSolver,
+		const std::string &warning_msg) {
+	BiCGSTABSolver.compute(A);
+	SpMat Afixed = A;
+	double regularization = 1e-10;
+	bool success = true;
+	SpMat I = SpMat(A.rows(), A.cols());
+	I.setIdentity();
+	while (BiCGSTABSolver.info() != Eigen::Success) {
+		regularization *= 10;
+		Afixed = Afixed + regularization * I;
+		BiCGSTABSolver.compute(Afixed);
+		success = BiCGSTABSolver.info();
+		if (regularization > 100)
+			break;
+	}
+	if (!success) {
+		std::cout << "Warning: " << warning_msg << " adding " << regularization
+				  << " identites.(BiCGSTA solver)" << std::endl;
+	}
+
+	return Afixed;
 }
 #endif
 
