@@ -35,9 +35,6 @@
 #include "../engine/MeshFileHandler.h"
 #include "../engine/Timer.h"
 #include "../engine/UtilityFunctions.h"
-#ifdef USE_SCHWARZ_PRECONDITIONER
-#include "../engine/SchwarzPreconditionerWrapper.h"
-#endif
 #include "AttachmentSpring.h"
 #include "Constraint.h"
 #include "FixedPoint.h"
@@ -474,12 +471,7 @@ public:
 	std::vector<std::vector<BackwardInformation>> backwardRecordsFiniteDiff;
 	Timer timer;
 	Eigen::SimplicialLLT<SpMat> Msolver;
-#ifdef USE_SCHWARZ_PRECONDITIONER
-	OmegaEngine::SchwarzPreconditionerTopology schwarzTopology;
-	Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, OmegaEngine::SchwarzPreconditionerWrapper> solverBiCGSTAB;
-#else
 	Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, Eigen::LeastSquareDiagonalPreconditioner<double>> solverBiCGSTAB;
-#endif
 
 	Simulation(Vec3d center) :
 			systemCenter(center),
@@ -1009,12 +1001,7 @@ private:
 			Eigen::SimplicialLLT<SpMat> &lltSolver,
 			const std::string &warning_msg);
 
-#ifdef USE_SCHWARZ_PRECONDITIONER
-	SpMat factorizeDirectSolverBiCGSTAB(const SpMat &A, Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, OmegaEngine::SchwarzPreconditionerWrapper> &solverBiCGSTAB, const std::string &warning_msg);
-	void ensureSchwarzTopology();
-#else
 	SpMat factorizeDirectSolverBiCGSTAB(const SpMat &A, Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, Eigen::LeastSquareDiagonalPreconditioner<double>> &solverBiCGSTAB, const std::string &warning_msg);
-#endif
 
 	std::chrono::steady_clock::time_point getTimeNow() {
 		return std::chrono::steady_clock::now();
