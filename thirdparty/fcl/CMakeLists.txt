@@ -176,16 +176,9 @@ endif()
 # Find required dependency libccd
 #
 # If libccd is not found, manually set the cache variables CCD_INCLUDE_DIR and
-# CCD_LIBRARY. If ccd target was already added (e.g. by parent add_subdirectory(libccd)), use it.
+# CCD_LIBRARY
 #===============================================================================
 find_package(ccd QUIET)
-if(TARGET ccd)
-  set(ccd_FOUND ON)
-endif()
-# Parent project may provide libccd via add_subdirectory(thirdparty/libccd)
-if(TOOL_CLOTH_CCD_PROVIDED)
-  set(ccd_FOUND ON)
-endif()
 
 # If ccd-config.cmake is not found, use pkg-config and/or find_path() and
 # find_library()

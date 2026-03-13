@@ -91,9 +91,9 @@ if (USE_FCL)
     set(EIGEN3_INCLUDE_DIR ${EXTERNAL_ROOT}/eigen CACHE PATH "Eigen3 include directory for FCL")
     set(BUILD_TESTING OFF CACHE BOOL "Disable FCL tests when building as subproject")
     set(FCL_BUILD_TESTS OFF CACHE BOOL "Disable FCL tests")
-    # Build libccd first so FCL can link to target ccd; tell FCL we provide ccd
-    set(TOOL_CLOTH_CCD_PROVIDED ON CACHE BOOL "libccd provided by thirdparty/libccd")
+    # Build libccd first so FCL can link to target ccd
     add_subdirectory(thirdparty/libccd ${CMAKE_BINARY_DIR}/thirdparty/libccd)
+    set(ccd_FOUND ON CACHE BOOL "libccd provided by thirdparty/libccd")
     add_subdirectory(thirdparty/fcl ${CMAKE_BINARY_DIR}/thirdparty/fcl)
 endif()
 

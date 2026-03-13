@@ -93,10 +93,9 @@ if(TARGET Eigen3::Eigen)
   # linked
   target_link_libraries(${PROJECT_NAME} PUBLIC Eigen3::Eigen)
 elseif(EIGEN3_INCLUDE_DIRS)
-  # PRIVATE so Eigen path (often in parent source tree) is not in INTERFACE and triggers CMake source-dir check
-  target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${EIGEN3_INCLUDE_DIRS})
+  target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC "${EIGEN3_INCLUDE_DIRS}")
 else()
-  target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${EIGEN3_INCLUDE_DIR})
+  target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC "${EIGEN3_INCLUDE_DIR}")
 endif()
 
 if(FCL_HAVE_OCTOMAP)
