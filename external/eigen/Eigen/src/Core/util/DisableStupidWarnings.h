@@ -21,6 +21,11 @@
     #pragma warning( push )
   #endif
   #pragma warning( disable : 4100 4101 4127 4181 4211 4244 4273 4324 4503 4512 4522 4700 4714 4717 4800)
+  // We currently rely on has_denorm in tests, and need it defined correctly for half/bfloat16.
+  #ifndef _SILENCE_CXX23_DENORM_DEPRECATION_WARNING
+    #define EIGEN_REENABLE_CXX23_DENORM_DEPRECATION_WARNING 1
+    #define _SILENCE_CXX23_DENORM_DEPRECATION_WARNING
+  #endif
 
 #elif defined __INTEL_COMPILER
   // 2196 - routine is both "inline" and "noinline" ("noinline" assumed)
@@ -48,7 +53,7 @@
     #if __has_warning("-Wimplicit-int-float-conversion")
       #pragma clang diagnostic ignored "-Wimplicit-int-float-conversion"
     #endif
-    #if ( defined(__ALTIVEC__) || defined(__VSX__) ) && __cplusplus < 201103L
+    #if ( defined(__ALTIVEC__) || defined(__VSX__) ) && ( !defined(__STDC_VERSION__) || (__STDC_VERSION__ < 201112L) )
       // warning: generic selections are a C11-specific feature
       // ignoring warnings thrown at vec_ctf in Altivec/PacketMath.h
       #if __has_warning("-Wc11-extensions")
@@ -121,6 +126,7 @@
   // The __device__ annotation seems to actually be needed in some cases,
   // otherwise resulting in kernel runtime errors.
   EIGEN_NV_DIAG_SUPPRESS(2886)
+  EIGEN_NV_DIAG_SUPPRESS(2929)
   EIGEN_NV_DIAG_SUPPRESS(2977)
   EIGEN_NV_DIAG_SUPPRESS(20012)
   #undef EIGEN_NV_DIAG_SUPPRESS

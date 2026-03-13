@@ -15,6 +15,9 @@
 
 #include <iostream>
 
+// IWYU pragma: private
+#include "../../InternalHeaderCheck.h"
+
 namespace Eigen {
 
 namespace internal {
@@ -105,7 +108,6 @@ struct packet_traits<std::complex<float> > : default_packet_traits {
     Vectorizable = 1,
     AlignedOnScalar = 1,
     size = 2,
-    HasHalfPacket = 0,
 
     HasAdd = 1,
     HasSub = 1,
@@ -420,7 +422,6 @@ struct packet_traits<std::complex<double> > : default_packet_traits {
     Vectorizable = 1,
     AlignedOnScalar = 0,
     size = 1,
-    HasHalfPacket = 0,
 
     HasAdd = 1,
     HasSub = 1,

@@ -11,14 +11,30 @@
 #define EIGEN_CXX11_TENSOR_TENSOR_INTDIV_H
 
 
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
+
 namespace Eigen {
+
+/** \internal
+  *
+  * \class TensorIntDiv
+  * \ingroup CXX11_Tensor_Module
+  *
+  * \brief Fast integer division by a constant.
+  *
+  * See the paper from Granlund and Montgomery for explanation.
+  *   (at https://doi.org/10.1145/773473.178249)
+  *
+  * \sa Tensor
+  */
 
 namespace internal {
 
   // Note: result is undefined if val == 0
   template <typename T>
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE
-  typename internal::enable_if<sizeof(T)==4,int>::type count_leading_zeros(const T val)
+  std::enable_if_t<sizeof(T)==4,int> count_leading_zeros(const T val)
   {
 #ifdef EIGEN_GPU_COMPILE_PHASE
     return __clz(val);
@@ -36,7 +52,7 @@ namespace internal {
 
   template <typename T>
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE
-  typename internal::enable_if<sizeof(T)==8,int>::type count_leading_zeros(const T val)
+  std::enable_if_t<sizeof(T)==8,int> count_leading_zeros(const T val)
   {
 #ifdef EIGEN_GPU_COMPILE_PHASE
     return __clzll(val);
@@ -64,13 +80,13 @@ namespace internal {
 
   template <typename T>
   struct UnsignedTraits {
-    typedef typename conditional<sizeof(T) == 8, uint64_t, uint32_t>::type type;
+    typedef std::conditional_t<sizeof(T) == 8, uint64_t, uint32_t> type;
   };
 
   template <typename T>
   struct DividerTraits {
     typedef typename UnsignedTraits<T>::type type;
-    static const int N = sizeof(T) * 8;
+    static constexpr int N = sizeof(T) * 8;
   };
 
   template <typename T>
@@ -121,17 +137,6 @@ namespace internal {
     }
   };
 
-/** \internal
- *
- * \ingroup CXX11_Tensor_Module
- *
- * \brief Fast integer division by a constant.
- *
- * See the paper from Granlund and Montgomery for explanation.
- *   (at https://doi.org/10.1145/773473.178249)
- *
- * \sa Tensor
- */
 template <typename T, bool div_gt_one = false>
 struct TensorIntDivisor {
  public:

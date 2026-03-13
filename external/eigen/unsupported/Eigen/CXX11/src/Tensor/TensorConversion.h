@@ -10,8 +10,18 @@
 #ifndef EIGEN_CXX11_TENSOR_TENSOR_CONVERSION_H
 #define EIGEN_CXX11_TENSOR_TENSOR_CONVERSION_H
 
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
+
 namespace Eigen {
 
+/** \class TensorConversionOp
+  * \ingroup CXX11_Tensor_Module
+  *
+  * \brief Tensor conversion class. This class makes it possible to vectorize
+  * type casting operations when the number of scalars per packet in the source
+  * and the destination type differ
+  */
 namespace internal {
 template<typename TargetType, typename XprType>
 struct traits<TensorConversionOp<TargetType, XprType> >
@@ -21,9 +31,9 @@ struct traits<TensorConversionOp<TargetType, XprType> >
   typedef typename traits<XprType>::StorageKind StorageKind;
   typedef typename traits<XprType>::Index Index;
   typedef typename XprType::Nested Nested;
-  typedef typename remove_reference<Nested>::type _Nested;
-  static const int NumDimensions = traits<XprType>::NumDimensions;
-  static const int Layout = traits<XprType>::Layout;
+  typedef std::remove_reference_t<Nested> Nested_;
+  static constexpr int NumDimensions = traits<XprType>::NumDimensions;
+  static constexpr int Layout = traits<XprType>::Layout;
   enum { Flags = 0 };
   typedef typename TypeConversion<Scalar, typename traits<XprType>::PointerType>::type PointerType;
 };
@@ -165,15 +175,9 @@ struct PacketConverter<TensorEvaluator, SrcPacket, TgtPacket, 1, TgtCoeffRatio> 
   const typename TensorEvaluator::Index m_maxIndex;
 };
 
-/**
- * \ingroup CXX11_Tensor_Module
- *
- * \brief Tensor conversion class. This class makes it possible to vectorize
- * type casting operations when the number of scalars per packet in the source
- * and the destination type differ
- */
-template <typename TargetType, typename XprType>
-class TensorConversionOp : public TensorBase<TensorConversionOp<TargetType, XprType>, ReadOnlyAccessors> {
+template<typename TargetType, typename XprType>
+class TensorConversionOp : public TensorBase<TensorConversionOp<TargetType, XprType>, ReadOnlyAccessors>
+{
   public:
     typedef typename internal::traits<TensorConversionOp>::Scalar Scalar;
     typedef typename internal::traits<TensorConversionOp>::StorageKind StorageKind;
@@ -186,7 +190,7 @@ class TensorConversionOp : public TensorBase<TensorConversionOp<TargetType, XprT
         : m_xpr(xpr) {}
 
     EIGEN_DEVICE_FUNC
-    const typename internal::remove_all<typename XprType::Nested>::type&
+    const internal::remove_all_t<typename XprType::Nested>&
     expression() const { return m_xpr; }
 
   protected:
@@ -249,12 +253,12 @@ struct PacketConv {
   typedef typename internal::unpacket_traits<SrcPacket>::type SrcType;
   typedef typename internal::unpacket_traits<TargetPacket>::type TargetType;
 
-  static const int PacketSize = internal::unpacket_traits<TargetPacket>::size;
+  static constexpr int PacketSize = internal::unpacket_traits<TargetPacket>::size;
 
   template <typename ArgType, typename Device>
   static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TargetPacket run(const TensorEvaluator<ArgType, Device>& impl, Index index) {
     internal::scalar_cast_op<SrcType, TargetType> converter;
-    EIGEN_ALIGN_MAX typename internal::remove_const<TargetType>::type values[PacketSize];
+    EIGEN_ALIGN_MAX std::remove_const_t<TargetType> values[PacketSize];
     EIGEN_UNROLL_LOOP
     for (int i = 0; i < PacketSize; ++i) {
       values[i] = converter(impl.coeff(index+i));
@@ -282,11 +286,11 @@ struct PacketConv<SrcPacket, TargetPacket, LoadMode, true, IsSameT> {
 template <typename SrcPacket, typename TargetPacket, int LoadMode>
 struct PacketConv<SrcPacket, TargetPacket, LoadMode, /*ActuallyVectorize=*/false, /*IsSameT=*/true> {
   typedef typename internal::unpacket_traits<TargetPacket>::type TargetType;
-  static const int PacketSize = internal::unpacket_traits<TargetPacket>::size;
+  static constexpr int PacketSize = internal::unpacket_traits<TargetPacket>::size;
 
   template <typename ArgType, typename Device>
   static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TargetPacket run(const TensorEvaluator<ArgType, Device>& impl, Index index) {
-    EIGEN_ALIGN_MAX typename internal::remove_const<TargetType>::type values[PacketSize];
+    EIGEN_ALIGN_MAX std::remove_const_t<TargetType> values[PacketSize];
     for (int i = 0; i < PacketSize; ++i) values[i] = impl.coeff(index+i);
     return internal::pload<TargetPacket>(values);
   }
@@ -311,11 +315,11 @@ struct TensorEvaluator<const TensorConversionOp<TargetType, ArgType>, Device>
   typedef typename TensorEvaluator<ArgType, Device>::Dimensions Dimensions;
   typedef TargetType Scalar;
   typedef TargetType CoeffReturnType;
-  typedef typename internal::remove_all<typename internal::traits<ArgType>::Scalar>::type SrcType;
+  typedef internal::remove_all_t<typename internal::traits<ArgType>::Scalar> SrcType;
   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
   typedef typename PacketType<SrcType, Device>::type PacketSourceType;
-  static const int PacketSize = PacketType<CoeffReturnType, Device>::size;
-  static const bool IsSameType = internal::is_same<TargetType, SrcType>::value;
+  static constexpr int PacketSize = PacketType<CoeffReturnType, Device>::size;
+  static constexpr bool IsSameType = internal::is_same<TargetType, SrcType>::value;
   typedef StorageMemory<CoeffReturnType, Device> Storage;
   typedef typename Storage::Type EvaluatorPointerType;
 
@@ -330,11 +334,11 @@ struct TensorEvaluator<const TensorConversionOp<TargetType, ArgType>, Device>
     #endif
     BlockAccess       = TensorEvaluator<ArgType, Device>::BlockAccess,
     PreferBlockAccess = TensorEvaluator<ArgType, Device>::PreferBlockAccess,
-    Layout            = TensorEvaluator<ArgType, Device>::Layout,
     RawAccess         = false
   };
 
-  static const int NumDims = internal::array_size<Dimensions>::value;
+  static constexpr int Layout = TensorEvaluator<ArgType, Device>::Layout;
+  static constexpr int NumDims = internal::array_size<Dimensions>::value;
 
   //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
   typedef internal::TensorBlockDescriptor<NumDims, Index> TensorBlockDesc;
@@ -439,12 +443,6 @@ struct TensorEvaluator<const TensorConversionOp<TargetType, ArgType>, Device>
 
   /// required by sycl in order to extract the sycl accessor
   const TensorEvaluator<ArgType, Device>& impl() const { return m_impl; }
-#ifdef EIGEN_USE_SYCL
-  // binding placeholder accessors to a command group handler for SYCL
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void bind(cl::sycl::handler &cgh) const {
-    m_impl.bind(cgh);
-  }
-#endif
 
  protected:
   TensorEvaluator<ArgType, Device> m_impl;

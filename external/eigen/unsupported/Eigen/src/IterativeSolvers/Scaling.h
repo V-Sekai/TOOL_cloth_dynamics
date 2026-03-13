@@ -10,10 +10,13 @@
 #ifndef EIGEN_ITERSCALING_H
 #define EIGEN_ITERSCALING_H
 
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
+
 namespace Eigen {
 
 /**
-  * \ingroup IterativeLinearSolvers_Module
+  * \ingroup IterativeSolvers_Module
   * \brief iterative scaling algorithm to equilibrate rows and column norms in matrices
   * 
   * This class can be used as a preprocessing tool to accelerate the convergence of iterative methods 
@@ -38,17 +41,17 @@ namespace Eigen {
   * x = scal.RightScaling().cwiseProduct(x); 
   * \endcode
   * 
-  * \tparam _MatrixType the type of the matrix. It should be a real square sparsematrix
+  * \tparam MatrixType_ the type of the matrix. It should be a real square sparsematrix
   * 
   * References : D. Ruiz and B. Ucar, A Symmetry Preserving Algorithm for Matrix Scaling, INRIA Research report RR-7552
   * 
   * \sa \ref IncompleteLUT 
   */
-template<typename _MatrixType>
+template<typename MatrixType_>
 class IterScaling
 {
   public:
-    typedef _MatrixType MatrixType; 
+    typedef MatrixType_ MatrixType;
     typedef typename MatrixType::Scalar Scalar;
     typedef typename MatrixType::Index Index;
     

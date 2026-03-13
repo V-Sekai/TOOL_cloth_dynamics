@@ -10,6 +10,9 @@
 #ifndef EIGEN_TRIANGULAR_MATRIX_MATRIX_H
 #define EIGEN_TRIANGULAR_MATRIX_MATRIX_H
 
+// IWYU pragma: private
+#include "../InternalHeaderCheck.h"
+
 namespace Eigen { 
 
 namespace internal {
@@ -89,7 +92,7 @@ struct product_triangular_matrix_matrix<Scalar,Index,Mode,true,
   
   typedef gebp_traits<Scalar,Scalar> Traits;
   enum {
-    SmallPanelWidth   = 2 * EIGEN_PLAIN_ENUM_MAX(Traits::mr,Traits::nr),
+    SmallPanelWidth   = 2 * plain_enum_max(Traits::mr, Traits::nr),
     IsLower = (Mode&Lower) == Lower,
     SetDiag = (Mode&(ZeroDiag|UnitDiag)) ? 0 : 1
   };
@@ -247,7 +250,7 @@ struct product_triangular_matrix_matrix<Scalar,Index,Mode,false,
 {
   typedef gebp_traits<Scalar,Scalar> Traits;
   enum {
-    SmallPanelWidth   = EIGEN_PLAIN_ENUM_MAX(Traits::mr,Traits::nr),
+    SmallPanelWidth   = plain_enum_max(Traits::mr, Traits::nr),
     IsLower = (Mode&Lower) == Lower,
     SetDiag = (Mode&(ZeroDiag|UnitDiag)) ? 0 : 1
   };
@@ -412,13 +415,19 @@ struct triangular_product_impl<Mode,LhsIsTriangular,Lhs,false,Rhs,false>
     
     typedef internal::blas_traits<Lhs> LhsBlasTraits;
     typedef typename LhsBlasTraits::DirectLinearAccessType ActualLhsType;
-    typedef typename internal::remove_all<ActualLhsType>::type ActualLhsTypeCleaned;
+    typedef internal::remove_all_t<ActualLhsType> ActualLhsTypeCleaned;
     typedef internal::blas_traits<Rhs> RhsBlasTraits;
     typedef typename RhsBlasTraits::DirectLinearAccessType ActualRhsType;
-    typedef typename internal::remove_all<ActualRhsType>::type ActualRhsTypeCleaned;
-    
-    typename internal::add_const_on_value_type<ActualLhsType>::type lhs = LhsBlasTraits::extract(a_lhs);
-    typename internal::add_const_on_value_type<ActualRhsType>::type rhs = RhsBlasTraits::extract(a_rhs);
+    typedef internal::remove_all_t<ActualRhsType> ActualRhsTypeCleaned;
+
+    internal::add_const_on_value_type_t<ActualLhsType> lhs = LhsBlasTraits::extract(a_lhs);
+    internal::add_const_on_value_type_t<ActualRhsType> rhs = RhsBlasTraits::extract(a_rhs);
+
+    // Empty product, return early.  Otherwise, we get `nullptr` use errors below when we try to access
+    // coeffRef(0,0).
+    if (lhs.size() == 0 || rhs.size() == 0) {
+      return;
+    }
 
     LhsScalar lhs_alpha = LhsBlasTraits::extractScalarFactor(a_lhs);
     RhsScalar rhs_alpha = RhsBlasTraits::extractScalarFactor(a_rhs);
@@ -451,12 +460,12 @@ struct triangular_product_impl<Mode,LhsIsTriangular,Lhs,false,Rhs,false>
     // Apply correction if the diagonal is unit and a scalar factor was nested:
     if ((Mode&UnitDiag)==UnitDiag)
     {
-      if (LhsIsTriangular && lhs_alpha!=LhsScalar(1))
+      if (LhsIsTriangular && !numext::is_exactly_one(lhs_alpha))
       {
         Index diagSize = (std::min)(lhs.rows(),lhs.cols());
         dst.topRows(diagSize) -= ((lhs_alpha-LhsScalar(1))*a_rhs).topRows(diagSize);
       }
-      else if ((!LhsIsTriangular) && rhs_alpha!=RhsScalar(1))
+      else if ((!LhsIsTriangular) && !numext::is_exactly_one(rhs_alpha))
       {
         Index diagSize = (std::min)(rhs.rows(),rhs.cols());
         dst.leftCols(diagSize) -= (rhs_alpha-RhsScalar(1))*a_lhs.leftCols(diagSize);

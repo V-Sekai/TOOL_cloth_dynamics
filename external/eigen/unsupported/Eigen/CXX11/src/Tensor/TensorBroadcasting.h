@@ -10,8 +10,18 @@
 #ifndef EIGEN_CXX11_TENSOR_TENSOR_BROADCASTING_H
 #define EIGEN_CXX11_TENSOR_TENSOR_BROADCASTING_H
 
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
+
 namespace Eigen {
 
+/** \class TensorBroadcasting
+  * \ingroup CXX11_Tensor_Module
+  *
+  * \brief Tensor broadcasting class.
+  *
+  *
+  */
 namespace internal {
 template<typename Broadcast, typename XprType>
 struct traits<TensorBroadcastingOp<Broadcast, XprType> > : public traits<XprType>
@@ -21,9 +31,9 @@ struct traits<TensorBroadcastingOp<Broadcast, XprType> > : public traits<XprType
   typedef typename XprTraits::StorageKind StorageKind;
   typedef typename XprTraits::Index Index;
   typedef typename XprType::Nested Nested;
-  typedef typename remove_reference<Nested>::type _Nested;
-  static const int NumDimensions = XprTraits::NumDimensions;
-  static const int Layout = XprTraits::Layout;
+  typedef std::remove_reference_t<Nested> Nested_;
+  static constexpr int NumDimensions = XprTraits::NumDimensions;
+  static constexpr int Layout = XprTraits::Layout;
   typedef typename XprTraits::PointerType PointerType;
 };
 
@@ -56,12 +66,12 @@ struct is_input_scalar<Sizes<Indices...> > {
 
 }  // end namespace internal
 
-/** Tensor broadcasting class.
- * \ingroup CXX11_Tensor_Module
- */
-template <typename Broadcast, typename XprType>
-class TensorBroadcastingOp : public TensorBase<TensorBroadcastingOp<Broadcast, XprType>, ReadOnlyAccessors> {
- public:
+
+
+template<typename Broadcast, typename XprType>
+class TensorBroadcastingOp : public TensorBase<TensorBroadcastingOp<Broadcast, XprType>, ReadOnlyAccessors>
+{
+  public:
   typedef typename Eigen::internal::traits<TensorBroadcastingOp>::Scalar Scalar;
   typedef typename Eigen::NumTraits<Scalar>::Real RealScalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
@@ -76,7 +86,7 @@ class TensorBroadcastingOp : public TensorBase<TensorBroadcastingOp<Broadcast, X
     const Broadcast& broadcast() const { return m_broadcast; }
 
     EIGEN_DEVICE_FUNC
-    const typename internal::remove_all<typename XprType::Nested>::type&
+    const internal::remove_all_t<typename XprType::Nested>&
     expression() const { return m_xpr; }
 
   protected:
@@ -91,14 +101,14 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
 {
   typedef TensorBroadcastingOp<Broadcast, ArgType> XprType;
   typedef typename XprType::Index Index;
-  static const int NumDims = internal::array_size<typename TensorEvaluator<ArgType, Device>::Dimensions>::value;
+  static constexpr int NumDims = internal::array_size<typename TensorEvaluator<ArgType, Device>::Dimensions>::value;
   typedef DSizes<Index, NumDims> Dimensions;
   typedef typename XprType::Scalar Scalar;
   typedef typename TensorEvaluator<ArgType, Device>::Dimensions InputDimensions;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
-  static const int PacketSize = PacketType<CoeffReturnType, Device>::size;
-  protected: //  all the non-static fields must have the same access control, otherwise the TensorEvaluator wont be standard layout;
+  static constexpr int PacketSize = PacketType<CoeffReturnType, Device>::size;
+  protected: //  all the non-static fields must have the same access control, otherwise the TensorEvaluator won't be standard layout;
   bool isCopy, nByOne, oneByN;
   public:
   typedef StorageMemory<CoeffReturnType, Device> Storage;
@@ -109,11 +119,11 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
     PacketAccess      = TensorEvaluator<ArgType, Device>::PacketAccess,
     BlockAccess       = TensorEvaluator<ArgType, Device>::BlockAccess,
     PreferBlockAccess = true,
-    Layout            = TensorEvaluator<ArgType, Device>::Layout,
     RawAccess         = false
   };
+  static constexpr int Layout = TensorEvaluator<ArgType, Device>::Layout;
 
-  typedef typename internal::remove_const<Scalar>::type ScalarNoConst;
+  typedef std::remove_const_t<Scalar> ScalarNoConst;
 
   // We do block based broadcasting using a trick with 2x tensor rank and 0
   // strides. See block method implementation for details.
@@ -222,7 +232,7 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
 
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE CoeffReturnType coeff(Index index) const
   {
-    if (internal::is_input_scalar<typename internal::remove_all<InputDimensions>::type>::value) {
+    if (internal::is_input_scalar<internal::remove_all_t<InputDimensions>>::value) {
       return m_impl.coeff(0);
     }
 
@@ -315,7 +325,7 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
   template<int LoadMode>
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE PacketReturnType packet(Index index) const
   {
-    if (internal::is_input_scalar<typename internal::remove_all<InputDimensions>::type>::value) {
+    if (internal::is_input_scalar<internal::remove_all_t<InputDimensions>>::value) {
       return internal::pset1<PacketReturnType>(m_impl.coeff(0));
     }
 
@@ -361,10 +371,9 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnType packetOneByNByOne
   (Index index) const
   {
-    EIGEN_STATIC_ASSERT((PacketSize > 1), YOU_MADE_A_PROGRAMMING_MISTAKE)
     eigen_assert(index+PacketSize-1 < dimensions().TotalSize());
 
-    EIGEN_ALIGN_MAX typename internal::remove_const<CoeffReturnType>::type values[PacketSize];
+    EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[PacketSize];
     Index startDim, endDim;
     Index inputIndex, outputOffset, batchedIndex;
 
@@ -407,7 +416,6 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
     // Concatenates m_broadcast[dim] copies,
     //    [v0, ..., vN, v0, ..., vN, ... ]
     // with dim == NumDims - 1 for col-major, dim == 0 for row-major.
-    EIGEN_STATIC_ASSERT((PacketSize > 1), YOU_MADE_A_PROGRAMMING_MISTAKE)
     eigen_assert(index+PacketSize-1 < dimensions().TotalSize());
 
     // Size of flattened tensor.
@@ -417,7 +425,7 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
     if (inputIndex + PacketSize <= M) {
       return m_impl.template packet<Unaligned>(inputIndex);
     } else {
-      EIGEN_ALIGN_MAX typename internal::remove_const<CoeffReturnType>::type values[PacketSize];
+      EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[PacketSize];
       EIGEN_UNROLL_LOOP
       for (int i = 0; i < PacketSize; ++i) {
         if (inputIndex > M - 1) {
@@ -436,7 +444,6 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
     // Interleaves m_broadcast[dim] copies,
     //    [v0, v0, ..., v1, v1, ..., vN, vN, ... ]
     // with dim == 0 for col-major, dim == NumDims - 1 for row-major.
-    EIGEN_STATIC_ASSERT((PacketSize > 1), YOU_MADE_A_PROGRAMMING_MISTAKE)
     eigen_assert(index + PacketSize-1 < dimensions().TotalSize());
 
     const Index M = (static_cast<int>(Layout) == static_cast<int>(ColMajor)) ?
@@ -447,7 +454,7 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
     if (outputOffset + PacketSize <= M) {
       return internal::pset1<PacketReturnType>(m_impl.coeff(inputIndex));
     } else {
-      EIGEN_ALIGN_MAX typename internal::remove_const<CoeffReturnType>::type values[PacketSize];
+      EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[PacketSize];
       EIGEN_UNROLL_LOOP
       for (int i = 0; i < PacketSize; ++i) {
         if (outputOffset < M) {
@@ -467,7 +474,6 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
   template<int LoadMode>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnType packetColMajor(Index index) const
   {
-    EIGEN_STATIC_ASSERT((PacketSize > 1), YOU_MADE_A_PROGRAMMING_MISTAKE)
     eigen_assert(index+PacketSize-1 < dimensions().TotalSize());
 
     const Index originalIndex = index;
@@ -507,7 +513,7 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
     if (innermostLoc + PacketSize <= m_impl.dimensions()[0]) {
       return m_impl.template packet<Unaligned>(inputIndex);
     } else {
-      EIGEN_ALIGN_MAX typename internal::remove_const<CoeffReturnType>::type values[PacketSize];
+      EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[PacketSize];
       values[0] = m_impl.coeff(inputIndex);
       EIGEN_UNROLL_LOOP
       for (int i = 1; i < PacketSize; ++i) {
@@ -525,7 +531,6 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
   template<int LoadMode>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnType packetRowMajor(Index index) const
   {
-    EIGEN_STATIC_ASSERT((PacketSize > 1), YOU_MADE_A_PROGRAMMING_MISTAKE)
     eigen_assert(index+PacketSize-1 < dimensions().TotalSize());
 
     const Index originalIndex = index;
@@ -565,7 +570,7 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
     if (innermostLoc + PacketSize <= m_impl.dimensions()[NumDims-1]) {
       return m_impl.template packet<Unaligned>(inputIndex);
     } else {
-      EIGEN_ALIGN_MAX typename internal::remove_const<CoeffReturnType>::type values[PacketSize];
+      EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[PacketSize];
       values[0] = m_impl.coeff(inputIndex);
       EIGEN_UNROLL_LOOP
       for (int i = 1; i < PacketSize; ++i) {
@@ -683,15 +688,8 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
   const TensorEvaluator<ArgType, Device>& impl() const { return m_impl; }
 
   Broadcast functor() const { return m_broadcast; }
-#ifdef EIGEN_USE_SYCL
-  // binding placeholder accessors to a command group handler for SYCL
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void bind(
-      cl::sycl::handler& cgh) const {
-    m_impl.bind(cgh);
-  }
-#endif
  private:
-  static const bool IsColMajor =
+  static constexpr bool IsColMajor =
       static_cast<int>(Layout) == static_cast<int>(ColMajor);
 
   // We will build a general case block broadcasting on top of broadcasting
@@ -900,7 +898,7 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
       // First multiple after a. This is b when <= bcast_dim_left_index +
       // bcast_dim_size.
       const Index first_multiple =
-          divup<Index>(bcast_dim_left_index, input_bcast_dim_size) *
+          numext::div_ceil<Index>(bcast_dim_left_index, input_bcast_dim_size) *
           input_bcast_dim_size;
 
       if (first_multiple <= bcast_dim_left_index + params.bcast_dim_size) {
@@ -1070,7 +1068,7 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
 
 protected:
   const Device EIGEN_DEVICE_REF m_device;
-  const typename internal::remove_reference<Broadcast>::type m_broadcast;
+  const std::remove_reference_t<Broadcast> m_broadcast;
   Dimensions m_dimensions;
   array<Index, NumDims> m_outputStrides;
   array<Index, NumDims> m_inputStrides;

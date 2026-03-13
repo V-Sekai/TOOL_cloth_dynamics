@@ -10,6 +10,9 @@
 #ifndef EIGEN_SPARSESPARSEPRODUCTWITHPRUNING_H
 #define EIGEN_SPARSESPARSEPRODUCTWITHPRUNING_H
 
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
+
 namespace Eigen { 
 
 namespace internal {
@@ -21,9 +24,9 @@ static void sparse_sparse_product_with_pruning_impl(const Lhs& lhs, const Rhs& r
 {
   // return sparse_sparse_product_with_pruning_impl2(lhs,rhs,res);
 
-  typedef typename remove_all<Rhs>::type::Scalar RhsScalar;
-  typedef typename remove_all<ResultType>::type::Scalar ResScalar;
-  typedef typename remove_all<Lhs>::type::StorageIndex StorageIndex;
+  typedef typename remove_all_t<Rhs>::Scalar RhsScalar;
+  typedef typename remove_all_t<ResultType>::Scalar ResScalar;
+  typedef typename remove_all_t<Lhs>::StorageIndex StorageIndex;
 
   // make sure to call innerSize/outerSize since we fake the storage order.
   Index rows = lhs.innerSize();
@@ -90,7 +93,7 @@ struct sparse_sparse_product_with_pruning_selector<Lhs,Rhs,ResultType,ColMajor,C
 
   static void run(const Lhs& lhs, const Rhs& rhs, ResultType& res, const RealScalar& tolerance)
   {
-    typename remove_all<ResultType>::type res_(res.rows(), res.cols());
+    remove_all_t<ResultType> res_(res.rows(), res.cols());
     internal::sparse_sparse_product_with_pruning_impl<Lhs,Rhs,ResultType>(lhs, rhs, res_, tolerance);
     res.swap(res_);
   }
@@ -117,7 +120,7 @@ struct sparse_sparse_product_with_pruning_selector<Lhs,Rhs,ResultType,RowMajor,R
   static void run(const Lhs& lhs, const Rhs& rhs, ResultType& res, const RealScalar& tolerance)
   {
     // let's transpose the product to get a column x column product
-    typename remove_all<ResultType>::type res_(res.rows(), res.cols());
+    remove_all_t<ResultType> res_(res.rows(), res.cols());
     internal::sparse_sparse_product_with_pruning_impl<Rhs,Lhs,ResultType>(rhs, lhs, res_, tolerance);
     res.swap(res_);
   }

@@ -4,7 +4,7 @@ if(EIGEN_BUILD_DOC)
 endif()
 if(EIGEN_BUILD_TESTING)
   if(EIGEN_LEAVE_TEST_IN_ALL_TARGET)
-    add_subdirectory(test) # CTest automatic test building relies on the "all" target.
+    add_subdirectory(test) # can't do EXCLUDE_FROM_ALL here, breaks CTest
   else()
     add_subdirectory(test EXCLUDE_FROM_ALL)
   endif()

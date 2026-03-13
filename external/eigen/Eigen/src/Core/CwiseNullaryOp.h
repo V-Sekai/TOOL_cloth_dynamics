@@ -10,6 +10,9 @@
 #ifndef EIGEN_CWISE_NULLARY_OP_H
 #define EIGEN_CWISE_NULLARY_OP_H
 
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
+
 namespace Eigen {
 
 namespace internal {
@@ -292,7 +295,7 @@ DenseBase<Derived>::LinSpaced(Index size, const Scalar& low, const Scalar& high)
 }
 
 /**
-  * \copydoc DenseBase::LinSpaced(Index, const DenseBase::Scalar&, const DenseBase::Scalar&)
+  * \copydoc DenseBase::LinSpaced(Index, const Scalar&, const Scalar&)
   * Special version for fixed size types which does not require the size parameter.
   */
 template<typename Derived>
@@ -302,6 +305,20 @@ DenseBase<Derived>::LinSpaced(const Scalar& low, const Scalar& high)
   EIGEN_STATIC_ASSERT_VECTOR_ONLY(Derived)
   EIGEN_STATIC_ASSERT_FIXED_SIZE(Derived)
   return DenseBase<Derived>::NullaryExpr(Derived::SizeAtCompileTime, internal::linspaced_op<Scalar>(low,high,Derived::SizeAtCompileTime));
+}
+
+template <typename Derived>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const typename DenseBase<Derived>::RandomAccessEqualSpacedReturnType
+DenseBase<Derived>::EqualSpaced(Index size, const Scalar& low, const Scalar& step) {
+  EIGEN_STATIC_ASSERT_VECTOR_ONLY(Derived)
+  return DenseBase<Derived>::NullaryExpr(size, internal::equalspaced_op<Scalar>(low, step));
+}
+
+template <typename Derived>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const typename DenseBase<Derived>::RandomAccessEqualSpacedReturnType
+DenseBase<Derived>::EqualSpaced(const Scalar& low, const Scalar& step) {
+  EIGEN_STATIC_ASSERT_VECTOR_ONLY(Derived)
+  return DenseBase<Derived>::NullaryExpr(Derived::SizeAtCompileTime, internal::equalspaced_op<Scalar>(low, step));
 }
 
 /** \returns true if all coefficients in this matrix are approximately equal to \a val, to within precision \a prec */
@@ -451,6 +468,19 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& DenseBase<Derived>::setLinSpaced(
 {
   EIGEN_STATIC_ASSERT_VECTOR_ONLY(Derived)
   return setLinSpaced(size(), low, high);
+}
+
+template <typename Derived>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& DenseBase<Derived>::setEqualSpaced(Index newSize, const Scalar& low,
+                                                                                  const Scalar& step) {
+  EIGEN_STATIC_ASSERT_VECTOR_ONLY(Derived)
+  return derived() = Derived::NullaryExpr(newSize, internal::equalspaced_op<Scalar>(low, step));
+}
+template <typename Derived>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& DenseBase<Derived>::setEqualSpaced(const Scalar& low,
+                                                                                  const Scalar& step) {
+  EIGEN_STATIC_ASSERT_VECTOR_ONLY(Derived)
+  return setEqualSpaced(size(), low, step);
 }
 
 // zero:

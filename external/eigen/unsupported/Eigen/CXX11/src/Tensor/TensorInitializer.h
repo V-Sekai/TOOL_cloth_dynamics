@@ -10,19 +10,20 @@
 #ifndef EIGEN_CXX11_TENSOR_TENSOR_INITIALIZER_H
 #define EIGEN_CXX11_TENSOR_TENSOR_INITIALIZER_H
 
-#if EIGEN_HAS_VARIADIC_TEMPLATES
-
 #include <initializer_list>
+
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
 
 namespace Eigen {
 
+/** \class TensorInitializer
+  * \ingroup CXX11_Tensor_Module
+  *
+  * \brief Helper template to initialize Tensors from std::initializer_lists.
+  */
 namespace internal {
 
-/**
- * \ingroup CXX11_Tensor_Module
- *
- * \brief Helper template to initialize Tensors from std::initializer_lists.
- */
 template <typename Derived, int N>
 struct Initializer {
   typedef std::initializer_list<
@@ -76,7 +77,5 @@ void initialize_tensor(TensorEvaluator<Derived, DefaultDevice>& tensor,
 
 }  // namespace internal
 }  // namespace Eigen
-
-#endif  // EIGEN_HAS_VARIADIC_TEMPLATES
 
 #endif  // EIGEN_CXX11_TENSOR_TENSOR_INITIALIZER_H
