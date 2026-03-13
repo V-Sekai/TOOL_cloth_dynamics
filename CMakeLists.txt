@@ -72,6 +72,12 @@ if (USE_SCHWARZ_PRECONDITIONER)
     add_compile_definitions(USE_SCHWARZ_PRECONDITIONER)
 endif ()
 
+option(USE_FCL "Use FCL for collision detection (mesh-based BVH and primitives)" ON)
+if (USE_FCL)
+    add_compile_definitions(USE_FCL)
+endif ()
+
+
 message("cxx Flags: " ${CMAKE_CXX_FLAGS})
 
 source_group("Shaders" FILES src/gpu/shaders)
@@ -79,6 +85,19 @@ source_group("Assets" FILES src/assets)
 
 add_subdirectory(${EXTERNAL_ROOT})
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+# FCL (Flexible Collision Library) for collision detection when USE_FCL is ON
+if (USE_FCL)
+    set(EIGEN3_INCLUDE_DIR ${EXTERNAL_ROOT}/eigen CACHE PATH "Eigen3 include directory for FCL")
+    set(BUILD_TESTING OFF CACHE BOOL "Disable FCL tests when building as subproject")
+    set(FCL_BUILD_TESTS OFF CACHE BOOL "Disable FCL tests")
+    # Build libccd first so FCL can link to target ccd; tell FCL we provide ccd
+    set(TOOL_CLOTH_CCD_PROVIDED ON CACHE BOOL "libccd provided by thirdparty/libccd")
+    add_subdirectory(thirdparty/libccd ${CMAKE_BINARY_DIR}/thirdparty/libccd)
+    add_subdirectory(thirdparty/fcl ${CMAKE_BINARY_DIR}/thirdparty/fcl)
+endif()
+
+
 
 
 
@@ -94,8 +113,12 @@ include_directories(dependencies/include)
 include_directories(src/assets)
 include_directories(src/gpu)
 include_directories(external/LBFGSpp/include)
-include_directories(external/fcl/include)
-include_directories(external/fcl/external/libccd/src)
+if (USE_FCL)
+    # FCL and libccd are provided by thirdparty/fcl build
+else()
+    include_directories(external/fcl/include)
+    include_directories(external/fcl/external/libccd/src)
+endif()
 include_directories(external/preconditioner)
 include_directories(dependencies/lib)
 
@@ -105,6 +128,10 @@ link_directories(${LIB})
 # OmegaEngine cpp
 file(GLOB HEADERS "src/code/*.h" "src/code/engine/*.h" "src/code/simulation/*.h" "src/code/supports/*.h" "src/code/optimization/*.h")
 file(GLOB SRCFILES "src/code/main.cpp" "src/code/*.h" "src/code/*.c" "src/code/engine/*.cpp" "src/code/engine/*.h" "src/code/simulation/*.cpp" "src/code/simulation/*.h" "src/code/supports/*.cpp" "src/code/supports/*.h" "src/code/optimization/*.cpp" "src/code/optimization/*.h")
+if (USE_FCL)
+    list(APPEND SRCFILES src/code/simulation/CollisionFCL.cpp)
+    list(APPEND HEADERS src/code/simulation/CollisionFCL.h)
+endif()
 # Schwarz preconditioner (Option B: copied sources, no submodule)
 set(PRECONDITIONER_SOURCES
 	external/preconditioner/SeOmp.cpp
@@ -116,4 +143,7 @@ add_executable(${EXECUTABLE_NAME} ${SRCFILES} ${PRECONDITIONER_SOURCES})
 
 target_link_directories(${PROJECT_NAME} PRIVATE "/usr/local/Cellar/libomp/16.0.6/lib/")
 target_link_libraries(${EXECUTABLE_NAME} PRIVATE OpenMP::OpenMP_CXX)
+if (USE_FCL)
+    target_link_libraries(${EXECUTABLE_NAME} PRIVATE fcl)
+endif()
 target_include_directories(${EXECUTABLE_NAME} PRIVATE ${EXTERNAL_HEADER})

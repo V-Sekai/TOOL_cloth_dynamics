@@ -948,6 +948,13 @@ public:
 	collisionDetection(const VecXd &x_n, const VecXd &v, const VecXd &x_prim,
 			const VecXd &v_prim);
 
+#ifdef USE_FCL
+	std::pair<collisionInfoPair,
+			std::vector<std::vector<SelfCollisionInformation>>>
+	collisionDetectionFCL(const VecXd &x_n, const VecXd &v, const VecXd &x_prim,
+			const VecXd &v_prim);
+#endif
+
 	std::vector<std::vector<Simulation::SelfCollisionInformation>>
 	contactSorting(Simulation::collisionInfoPair &detections,
 			std::map<int, std::set<int>> &selfCollisionMap,
