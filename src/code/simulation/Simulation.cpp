@@ -1463,6 +1463,16 @@ VecXd Simulation::solveDirect(VecXd &dL_dxnew, double t_2, SpMat &dproj_dxnew_t,
 			currentSysMat.C_t * dr_df_t;
 
 	SpMat P_N_T = currentSysMat.P - delta_P_T;
+#ifdef USE_SCHWARZ_PRECONDITIONER
+	ensureSchwarzTopology();
+	VecXd posVec(3 * particles.size());
+	for (size_t i = 0; i < particles.size(); i++) {
+		posVec(3 * static_cast<Eigen::Index>(i) + 0) = particles[i].pos(0);
+		posVec(3 * static_cast<Eigen::Index>(i) + 1) = particles[i].pos(1);
+		posVec(3 * static_cast<Eigen::Index>(i) + 2) = particles[i].pos(2);
+	}
+	solverBiCGSTAB.preconditioner().setPositions(posVec.data(), static_cast<int>(particles.size()));
+#endif
 	factorizeDirectSolverBiCGSTAB(P_N_T, solverBiCGSTAB, "factorize solverBiCGSTAB");
 	VecXd u_star = solverBiCGSTAB.solve(dL_dxnew);
 	timeSteptimer.toc();
@@ -4535,6 +4545,44 @@ VecXd Simulation::getParticleNormals(std::vector<Triangle> mesh,
 	return normals;
 }
 
+#ifdef USE_SCHWARZ_PRECONDITIONER
+void Simulation::ensureSchwarzTopology() {
+	if (mesh.empty() || particles.empty()) return;
+	std::vector<int> triP0, triP1, triP2;
+	triP0.reserve(mesh.size());
+	triP1.reserve(mesh.size());
+	triP2.reserve(mesh.size());
+	for (const auto &t : mesh) {
+		triP0.push_back(t.p0_idx);
+		triP1.push_back(t.p1_idx);
+		triP2.push_back(t.p2_idx);
+	}
+	schwarzTopology.build(static_cast<int>(particles.size()), triP0, triP1, triP2);
+	solverBiCGSTAB.preconditioner().setTopology(schwarzTopology);
+}
+
+SpMat Simulation::factorizeDirectSolverBiCGSTAB(
+		const SpMat &A, Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, OmegaEngine::SchwarzPreconditionerWrapper> &BiCGSTABSolver,
+		const std::string &warning_msg) {
+	BiCGSTABSolver.compute(A);
+	SpMat Afixed = A;
+	double regularization = 1e-10;
+	SpMat I = SpMat(A.rows(), A.cols());
+	I.setIdentity();
+	while (BiCGSTABSolver.info() != Eigen::Success) {
+		regularization *= 10;
+		Afixed = Afixed + regularization * I;
+		BiCGSTABSolver.compute(Afixed);
+		if (regularization > 100)
+			break;
+	}
+	if (BiCGSTABSolver.info() != Eigen::Success) {
+		std::cout << "Warning: " << warning_msg << " adding " << regularization
+				  << " identites.(BiCGSTA solver)" << std::endl;
+	}
+	return Afixed;
+}
+#else
 SpMat Simulation::factorizeDirectSolverBiCGSTAB(
 		const SpMat &A, Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, Eigen::LeastSquareDiagonalPreconditioner<double>> &BiCGSTABSolver,
 		const std::string &warning_msg) {
@@ -4559,6 +4607,7 @@ SpMat Simulation::factorizeDirectSolverBiCGSTAB(
 
 	return Afixed;
 }
+#endif
 
 SpMat Simulation::factorizeDirectSolverLLT(
 		const SpMat &A, Eigen::SimplicialLLT<SpMat> &lltSolver,

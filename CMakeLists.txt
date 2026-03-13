@@ -67,6 +67,11 @@ if (USE_DEBUG)
     add_compile_options(-DUSE_DEBUG)
 endif ()
 
+option(USE_SCHWARZ_PRECONDITIONER "Use Schwarz preconditioner for backward BiCGSTAB" OFF)
+if (USE_SCHWARZ_PRECONDITIONER)
+    add_compile_definitions(USE_SCHWARZ_PRECONDITIONER)
+endif ()
+
 
 message("cxx Flags: " ${CMAKE_CXX_FLAGS})
 
@@ -94,6 +99,7 @@ include_directories(src/gpu)
 include_directories(external/LBFGSpp/include)
 include_directories(external/fcl/include)
 include_directories(external/fcl/external/libccd/src)
+include_directories(external/preconditioner)
 include_directories(dependencies/lib)
 
 
@@ -102,8 +108,14 @@ link_directories(${LIB})
 # OmegaEngine cpp
 file(GLOB HEADERS "src/code/*.h" "src/code/engine/*.h" "src/code/simulation/*.h" "src/code/supports/*.h" "src/code/optimization/*.h")
 file(GLOB SRCFILES "src/code/main.cpp" "src/code/*.h" "src/code/*.c" "src/code/engine/*.cpp" "src/code/engine/*.h" "src/code/simulation/*.cpp" "src/code/simulation/*.h" "src/code/supports/*.cpp" "src/code/supports/*.h" "src/code/optimization/*.cpp" "src/code/optimization/*.h")
+# Schwarz preconditioner (Option B: copied sources, no submodule)
+set(PRECONDITIONER_SOURCES
+	external/preconditioner/SeOmp.cpp
+	external/preconditioner/SeSchwarzPreconditioner.cpp
+)
 source_group("Sources" FILES ${SRCFILES})
-add_executable(${EXECUTABLE_NAME} ${SRCFILES}  )
+source_group("Preconditioner" FILES ${PRECONDITIONER_SOURCES})
+add_executable(${EXECUTABLE_NAME} ${SRCFILES} ${PRECONDITIONER_SOURCES})
 
 target_link_directories(${PROJECT_NAME} PRIVATE "/usr/local/Cellar/libomp/16.0.6/lib/")
 target_link_libraries(${EXECUTABLE_NAME} OpenMP::OpenMP_CXX)
