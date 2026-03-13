@@ -48,6 +48,7 @@
 #include "Triangle.h"
 #include "TriangleBending.h"
 #include <Eigen/Core>
+#include <Eigen/IterativeLinearSolvers>
 #include <Eigen/Sparse>
 #include <iomanip>
 #include <memory>
@@ -476,10 +477,9 @@ public:
 	Eigen::SimplicialLLT<SpMat> Msolver;
 #ifdef USE_SCHWARZ_PRECONDITIONER
 	OmegaEngine::SchwarzPreconditionerTopology schwarzTopology;
-	Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, OmegaEngine::SchwarzPreconditionerWrapper> solverBiCGSTAB;
-#else
-	Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, Eigen::LeastSquareDiagonalPreconditioner<double>> solverBiCGSTAB;
 #endif
+	// PCG is more stable than BiCGSTAB for symmetric positive-definite systems (Wu et al. 2022, TOG).
+	Eigen::ConjugateGradient<SpMat, Eigen::Lower, Eigen::DiagonalPreconditioner<double>> solverPCG;
 
 	Simulation(Vec3d center) :
 			systemCenter(center),
@@ -948,6 +948,13 @@ public:
 	collisionDetection(const VecXd &x_n, const VecXd &v, const VecXd &x_prim,
 			const VecXd &v_prim);
 
+#ifdef USE_FCL
+	std::pair<collisionInfoPair,
+			std::vector<std::vector<SelfCollisionInformation>>>
+	collisionDetectionFCL(const VecXd &x_n, const VecXd &v, const VecXd &x_prim,
+			const VecXd &v_prim);
+#endif
+
 	std::vector<std::vector<Simulation::SelfCollisionInformation>>
 	contactSorting(Simulation::collisionInfoPair &detections,
 			std::map<int, std::set<int>> &selfCollisionMap,
@@ -1010,11 +1017,11 @@ private:
 			const std::string &warning_msg);
 
 #ifdef USE_SCHWARZ_PRECONDITIONER
-	SpMat factorizeDirectSolverBiCGSTAB(const SpMat &A, Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, OmegaEngine::SchwarzPreconditionerWrapper> &solverBiCGSTAB, const std::string &warning_msg);
 	void ensureSchwarzTopology();
-#else
-	SpMat factorizeDirectSolverBiCGSTAB(const SpMat &A, Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, Eigen::LeastSquareDiagonalPreconditioner<double>> &solverBiCGSTAB, const std::string &warning_msg);
 #endif
+	SpMat factorizeSolverPCG(const SpMat &A,
+			Eigen::ConjugateGradient<SpMat, Eigen::Lower, Eigen::DiagonalPreconditioner<double>> &solver,
+			const std::string &warning_msg);
 
 	std::chrono::steady_clock::time_point getTimeNow() {
 		return std::chrono::steady_clock::now();

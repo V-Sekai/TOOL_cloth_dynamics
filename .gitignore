@@ -25,3 +25,4 @@ godot.exe
 .godot/
 
 .DS_Store
+/build_fcl
