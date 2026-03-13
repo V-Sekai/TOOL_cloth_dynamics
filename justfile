@@ -29,6 +29,12 @@ optimize-all randseed:
 clean:
     rm -rf build
 
+# Fetch FCL and libccd via git-subrepo (run from TOOL_cloth_dynamics root).
+# Requires: https://github.com/ingydotnet/git-subrepo
+thirdparty-fetch:
+    git subrepo clone https://github.com/danfis/libccd thirdparty/libccd
+    git subrepo clone https://github.com/flexible-collision-library/fcl thirdparty/fcl -- --branch 0.7.0
+
 fetch-and-extract:
     curl -o $FILENAME -L $URL
     unzip $FILENAME $EXTRACTED_FILE
