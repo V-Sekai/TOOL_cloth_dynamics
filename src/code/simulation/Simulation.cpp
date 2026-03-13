@@ -1289,13 +1289,8 @@ void Simulation::step() {
 
 			if (contactEnabled) {
 				if (iterIdx == 0) {
-#ifdef USE_FCL
-					detectionInfos = collisionDetectionFCL(x_n, v_now, xnew_n_primitives,
-							v_n_primitives);
-#else
 					detectionInfos = collisionDetection(x_n, v_now, xnew_n_primitives,
 							v_n_primitives);
-#endif
 				}
 				timeSteptimer.tic("calc r");
 				collisionResults = calculateDryFrictionVector(f, detectionInfos);
