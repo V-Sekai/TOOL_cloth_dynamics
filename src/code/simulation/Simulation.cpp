@@ -166,9 +166,11 @@ std::pair<VecXd, VecXd> Simulation::getCurrentPosVelocityVec() const {
 		}
 	}
 
-	if (encounteredNAN)
+	if (encounteredNAN) {
 		std::printf("WARNING: encountered NAN in getCurrentPosVelocityVec() %d\n",
 				nanCount);
+		exit(1);
+	}
 
 	return std::make_pair(pos, velocity);
 }
@@ -691,11 +693,15 @@ Simulation::calculateDryFrictionVector(const VecXd &f,
 	if (contactEnabled) {
 		for (PrimitiveCollisionInformation &info : infos) {
 			if (info.primitiveId != -1) {
+				if (!(info.normal.array().isFinite().all()))
+					continue;
 				int pIdx = info.particleId;
 				Primitive *prim = primitives[info.primitiveId];
 
 				Vec3d d = f.segment(pIdx * 3, 3) - particles[pIdx].mass * info.v_out;
 				info.d = d;
+				if (!(info.d.array().isFinite().all()))
+					continue;
 				Vec3d r_i =
 						calcualteDryFrictionForce(info.normal, info.d, prim->mu, info.type);
 				r.segment(pIdx * 3, 3) += r_i;
@@ -708,6 +714,8 @@ Simulation::calculateDryFrictionVector(const VecXd &f,
 			for (std::vector<SelfCollisionInformation> &selfInfos :
 					detectionInfos.second) {
 				for (SelfCollisionInformation &info : selfInfos) {
+					if (!(info.normal.array().isFinite().all()))
+						continue;
 					Vec3d f_iA = f.segment(info.particleId1 * 3, 3) +
 							r.segment(info.particleId1 * 3, 3);
 					Vec3d f_iB = f.segment(info.particleId2 * 3, 3) +
@@ -716,6 +724,8 @@ Simulation::calculateDryFrictionVector(const VecXd &f,
 					double m_B = particles[info.particleId2].mass;
 					Vec3d d = (f_iA / m_A - f_iB / m_B);
 					info.d = d;
+					if (!(info.d.array().isFinite().all()))
+						continue;
 
 					double clothFrictionalCoeff = 0.1;
 					double k = (m_A * m_B) / (m_A + m_B); //
@@ -900,8 +910,8 @@ Vec3d Simulation::calcualteDryFrictionForce(const Vec3d &n, const Vec3d &f_i,
 		} else {
 			if (printCases)
 				std::printf("c3: slide");
-			r_i += -mu * std::abs(sign_dist) * f_T.normalized();
-			//      r_i += mu * sign_dist * f_T.normalized();
+			if (dT_norm >= 1e-10)
+				r_i += -mu * std::abs(sign_dist) * f_T.normalized();
 			type = CollisionType::SLIDE;
 		}
 	}
