@@ -38,7 +38,7 @@ namespace {
 
 // Build FCL BVH for the cloth from mesh and vertex positions x (3n).
 std::shared_ptr<fcl::BVHModel<BV>> buildClothBVH(
-    const std::vector<::Triangle>& mesh,
+    const std::vector<OmegaEngine::Triangle>& mesh,
     const Eigen::VectorXd& x) {
   auto model = std::make_shared<fcl::BVHModel<BV>>();
   const int numVertices = static_cast<int>(x.size() / 3);
@@ -59,14 +59,15 @@ std::shared_ptr<fcl::BVHModel<BV>> buildClothBVH(
 
 // Create FCL collision object for a primitive. Returns null if type not supported for direct shape.
 std::shared_ptr<fcl::CollisionGeometry<S>> createPrimitiveShape(
-    ::Primitive* prim, const Vec3d& center) {
+    OmegaEngine::Primitive* prim, const Vec3d& center) {
+  using namespace OmegaEngine;
   if (!prim->isEnabled) return nullptr;
   if (auto* s = dynamic_cast<Sphere*>(prim)) {
     return std::make_shared<fcl::Sphere<S>>(s->radius);
   }
   if (auto* p = dynamic_cast<Plane*>(prim)) {
     // FCL Halfspace: n·x = d, interior is n·x < d. Plane: planeNormal·x + d = 0 => n·x = -d/|n|.
-    Vec3d n = p->planeNormal / p->planeNormalNorm;
+    OmegaEngine::Vec3d n = p->planeNormal / p->planeNormalNorm;
     S d_val = static_cast<S>(-p->d / p->planeNormalNorm);
     return std::make_shared<fcl::Halfspace<S>>(
         Vec3(n(0), n(1), n(2)), d_val);
@@ -78,7 +79,7 @@ std::shared_ptr<fcl::CollisionGeometry<S>> createPrimitiveShape(
   if (prim->mesh.empty()) return nullptr;
   std::vector<Vec3> pts;
   for (const auto& pt : prim->points) {
-    Vec3d pos = pt.pos + prim->center + center;
+    OmegaEngine::Vec3d pos = pt.pos + prim->center + center;
     pts.push_back(Vec3(pos(0), pos(1), pos(2)));
   }
   std::vector<fcl::Triangle> tris;
@@ -94,10 +95,10 @@ std::shared_ptr<fcl::CollisionGeometry<S>> createPrimitiveShape(
   return model;
 }
 
-Transform3 getPrimitiveTransform(::Primitive* prim, const Vec3d& center) {
+Transform3 getPrimitiveTransform(OmegaEngine::Primitive* prim, const Vec3d& center) {
   Transform3 tf = Transform3::Identity();
   tf.translation() = Vec3(center(0), center(1), center(2));
-  if (auto* c = dynamic_cast<Capsule*>(prim)) {
+  if (auto* c = dynamic_cast<OmegaEngine::Capsule*>(prim)) {
     // Capsule axis: use globalAxis or rotation
     Eigen::Matrix3d R = c->globalRotation.linear();
     tf.linear() = R;
@@ -106,7 +107,7 @@ Transform3 getPrimitiveTransform(::Primitive* prim, const Vec3d& center) {
 }
 
 // Pick particle id from cloth triangle contact: vertex closest to contact position.
-int triangleToParticleId(const ::Triangle& t, const Vec3d& contactPos,
+int triangleToParticleId(const OmegaEngine::Triangle& t, const Vec3d& contactPos,
                          const Eigen::VectorXd& x) {
   auto dist = [&](int idx) {
     return (contactPos - x.segment<3>(3 * idx)).norm();
@@ -120,6 +121,8 @@ int triangleToParticleId(const ::Triangle& t, const Vec3d& contactPos,
 
 }  // namespace
 
+namespace OmegaEngine {
+
 std::pair<Simulation::collisionInfoPair,
           std::vector<std::vector<Simulation::SelfCollisionInformation>>>
 Simulation::collisionDetectionFCL(const VecXd& x_n, const VecXd& v,
@@ -132,7 +135,7 @@ Simulation::collisionDetectionFCL(const VecXd& x_n, const VecXd& v,
     return std::make_pair(std::make_pair(infos, selfinfos), layers);
   }
 
-  const int numParticles = static_cast<int>(particles.size());
+  const int n = static_cast<int>(particles.size());
   const int numPrims = static_cast<int>(primitives.size());
 
   // Build cloth BVH
@@ -145,9 +148,7 @@ Simulation::collisionDetectionFCL(const VecXd& x_n, const VecXd& v,
   request.num_max_contacts = 10000;
   request.enable_contact = true;
 
-  // Cloth vs primitives. FCL contact: b1 = cloth (mesh) triangle index, b2 = primitive side.
-  // Deduplicate by (particleId, primitiveId): keep one contact per particle per primitive (max depth),
-  // to match original path semantics and avoid stacking many forces on the same particle.
+  // Cloth vs primitives
   for (int i = 0; i < numPrims; ++i) {
     Primitive* prim = primitives[i];
     Vec3d center = x_prim.segment<3>(3 * i);
@@ -157,50 +158,34 @@ Simulation::collisionDetectionFCL(const VecXd& x_n, const VecXd& v,
     fcl::CollisionObject<S> primObj(geom, primTf);
     fcl::CollisionResult<S> result;
     fcl::collide(&clothObj, &primObj, request, result);
-    std::map<int, PrimitiveCollisionInformation> bestByParticle;
     for (size_t k = 0; k < result.numContacts(); ++k) {
       const auto& c = result.getContact(static_cast<int>(k));
       int triId = static_cast<int>(c.b1);
       if (triId < 0 || triId >= static_cast<int>(mesh.size())) continue;
-      Vec3d pos(c.pos(0), c.pos(1), c.pos(2));
-      double depth = static_cast<double>(c.penetration_depth);
-      if (!(pos.array().isFinite().all()) || !std::isfinite(depth)) continue;
-      depth = std::max(0.0, depth);
-      Vec3d n(c.normal(0), c.normal(1), c.normal(2));
-      n = -n;
-      if (!(n.array().isFinite().all()) || n.norm() < 1e-10) continue;
-      n.normalize();
       const Triangle& t = mesh[triId];
+      Vec3d pos(c.pos(0), c.pos(1), c.pos(2));
       int particleId = triangleToParticleId(t, pos, x_n);
-      if (particleId < 0 || particleId >= numParticles) continue;
-      auto it = bestByParticle.find(particleId);
-      if (it == bestByParticle.end() || depth > it->second.dist) {
-        PrimitiveCollisionInformation info{};
-        info.primitiveId = i;
-        info.particleId = particleId;
-        info.normal = n;
-        info.v_out = Vec3d(0, 0, 0);
-        info.collides = true;
-        info.dist = depth;
-        info.primTotalCollision = 1;
-        info.r = Vec3d(0, 0, 0);
-        info.d = info.normal * info.dist;
-        info.type = STICK;
-        bestByParticle[particleId] = info;
-      }
+      PrimitiveCollisionInformation info{};
+      info.primitiveId = i;
+      info.particleId = particleId;
+      info.normal = Vec3d(c.normal(0), c.normal(1), c.normal(2));
+      info.v_out = Vec3d(0, 0, 0);
+      info.collides = true;
+      info.dist = static_cast<double>(c.penetration_depth);
+      info.primTotalCollision = 1;
+      info.r = Vec3d(0, 0, 0);
+      info.d = info.normal * info.dist;
+      info.type = STICK;
+      infos.push_back(info);
     }
-    for (const auto& kv : bestByParticle)
-      infos.push_back(kv.second);
   }
 
-  // Self-collision: cloth vs cloth (same BVH, two objects).
-  // Deduplicate by particle pair so contactSorting sees one entry per (p1,p2).
+  // Self-collision: cloth vs cloth (same BVH, two objects)
   if (selfcollisionEnabled && mesh.size() > 1) {
     auto clothGeom2 = std::shared_ptr<fcl::CollisionGeometry<S>>(clothModel);
     fcl::CollisionObject<S> clothObj2(clothGeom2, clothTf);
     fcl::CollisionResult<S> selfResult;
     fcl::collide(&clothObj, &clothObj2, request, selfResult);
-    std::set<std::pair<int, int>> seenPairs;
     for (size_t k = 0; k < selfResult.numContacts(); ++k) {
       const auto& c = selfResult.getContact(static_cast<int>(k));
       int tri1 = static_cast<int>(c.b1);
@@ -209,31 +194,20 @@ Simulation::collisionDetectionFCL(const VecXd& x_n, const VecXd& v,
       if (tri1 < 0 || tri1 >= static_cast<int>(mesh.size()) ||
           tri2 < 0 || tri2 >= static_cast<int>(mesh.size()))
         continue;
-      Vec3d pos(c.pos(0), c.pos(1), c.pos(2));
-      double depth = static_cast<double>(c.penetration_depth);
-      if (!(pos.array().isFinite().all()) || !std::isfinite(depth)) continue;
-      depth = std::max(0.0, depth);
-      Vec3d n(c.normal(0), c.normal(1), c.normal(2));
-      if (!(n.array().isFinite().all()) || n.norm() < 1e-10) continue;
-      n.normalize();
       const Triangle& t1 = mesh[tri1];
       const Triangle& t2 = mesh[tri2];
+      Vec3d pos(c.pos(0), c.pos(1), c.pos(2));
       int p1 = triangleToParticleId(t1, pos, x_n);
       int p2 = triangleToParticleId(t2, pos, x_n);
       if (p1 == p2) continue;
-      if (p1 < 0 || p1 >= numParticles || p2 < 0 || p2 >= numParticles) continue;
-      int a = std::min(p1, p2);
-      int b = std::max(p1, p2);
-      if (seenPairs.count({a, b})) continue;
-      seenPairs.insert({a, b});
       SelfCollisionInformation info{};
-      info.particleId1 = a;
-      info.particleId2 = b;
-      info.normal = n;
-      info.d = info.normal * depth;
+      info.particleId1 = std::min(p1, p2);
+      info.particleId2 = std::max(p1, p2);
+      info.normal = Vec3d(c.normal(0), c.normal(1), c.normal(2));
+      info.d = info.normal * static_cast<double>(c.penetration_depth);
       info.r = Vec3d(0, 0, 0);
       info.collides = true;
-      info.dist = depth;
+      info.dist = static_cast<double>(c.penetration_depth);
       info.layerId = 0;
       info.type = STICK;
       selfinfos.push_back(info);
@@ -242,7 +216,7 @@ Simulation::collisionDetectionFCL(const VecXd& x_n, const VecXd& v,
 
   // Build selfCollisionMap and selfCollisionTable for contactSorting
   std::map<int, std::set<int>> selfCollisionMap;
-  MatXi selfCollisionTable(numParticles, numParticles);
+  MatXi selfCollisionTable(n, n);
   selfCollisionTable.setZero();
   for (size_t i = 0; i < selfinfos.size(); ++i) {
     int a = selfinfos[i].particleId1;
@@ -261,5 +235,7 @@ Simulation::collisionDetectionFCL(const VecXd& x_n, const VecXd& v,
 
   return std::make_pair(detections, layers);
 }
+
+}  // namespace OmegaEngine
 
 #endif  // USE_FCL
