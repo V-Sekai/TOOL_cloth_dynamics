@@ -19,15 +19,15 @@ template<typename MatrixType> void verifyIsQuasiTriangular(const MatrixType& T)
   // Check T is lower Hessenberg
   for(int row = 2; row < size; ++row) {
     for(int col = 0; col < row - 1; ++col) {
-      VERIFY_IS_EQUAL(T(row,col), Scalar(0));
+      VERIFY(T(row,col) == Scalar(0));
     }
   }
 
   // Check that any non-zero on the subdiagonal is followed by a zero and is
   // part of a 2x2 diagonal block with imaginary eigenvalues.
   for(int row = 1; row < size; ++row) {
-    if (!numext::is_exactly_zero(T(row, row - 1))) {
-      VERIFY(row == size-1 || numext::is_exactly_zero(T(row + 1, row)));
+    if (T(row,row-1) != Scalar(0)) {
+      VERIFY(row == size-1 || T(row+1,row) == 0);
       Scalar tr = T(row-1,row-1) + T(row,row);
       Scalar det = T(row-1,row-1) * T(row,row) - T(row-1,row) * T(row,row-1);
       VERIFY(4 * det > tr * tr);
@@ -98,6 +98,16 @@ template<typename MatrixType> void schur(int size = MatrixType::ColsAtCompileTim
   }
 }
 
+void test_bug2633() {
+  Eigen::MatrixXd A(4, 4);
+  A << 0,  0,  0, -2,
+       1,  0,  0, -0,
+       0,  1,  0,  2,
+       0,  0,  2, -0;
+  RealSchur<Eigen::MatrixXd> schur(A);
+  VERIFY(schur.info() == Eigen::Success);
+}
+
 EIGEN_DECLARE_TEST(schur_real)
 {
   CALL_SUBTEST_1(( schur<Matrix4f>() ));
@@ -107,4 +117,6 @@ EIGEN_DECLARE_TEST(schur_real)
 
   // Test problem size constructors
   CALL_SUBTEST_5(RealSchur<MatrixXf>(10));
+
+  CALL_SUBTEST_6(( test_bug2633() ));
 }

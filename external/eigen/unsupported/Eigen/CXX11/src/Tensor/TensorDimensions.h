@@ -11,26 +11,7 @@
 #define EIGEN_CXX11_TENSOR_TENSOR_DIMENSIONS_H
 
 
-// IWYU pragma: private
-#include "./InternalHeaderCheck.h"
-
 namespace Eigen {
-
-/** \internal
-  *
-  * \class TensorDimensions
-  * \ingroup CXX11_Tensor_Module
-  *
-  * \brief Set of classes used to encode and store the dimensions of a Tensor.
-  *
-  * The Sizes class encodes as part of the type the number of dimensions and the
-  * sizes corresponding to each dimension. It uses no storage space since it is
-  * entirely known at compile time.
-  * The DSizes class is its dynamic sibling: the number of dimensions is known
-  * at compile time but the sizes are set during execution.
-  *
-  * \sa Tensor
-  */
 
 // Boilerplate code
 namespace internal {
@@ -90,8 +71,19 @@ struct fixed_size_tensor_index_extraction_helper<Index, 0>
 }  // end namespace internal
 
 
-// Fixed size
 #ifndef EIGEN_EMULATE_CXX11_META_H
+/** \internal
+ *
+ * \ingroup CXX11_Tensor_Module
+ *
+ * \brief Fixed dimensions of a Tensor.
+ *
+ * The Sizes class encodes as part of the type the number of dimensions and the
+ * sizes corresponding to each dimension. It uses no storage space since it is
+ * entirely known at compile time.
+ *
+ * \sa Tensor
+ */
 template <typename std::ptrdiff_t... Indices>
 struct Sizes {
   typedef internal::numeric_list<std::ptrdiff_t, Indices...> Base;
@@ -112,10 +104,12 @@ struct Sizes {
   explicit EIGEN_DEVICE_FUNC Sizes(const array<DenseIndex, Base::count>& /*indices*/) {
     // todo: add assertion
   }
+#if EIGEN_HAS_VARIADIC_TEMPLATES
   template <typename... DenseIndex> EIGEN_DEVICE_FUNC Sizes(DenseIndex...) { }
   explicit EIGEN_DEVICE_FUNC Sizes(std::initializer_list<std::ptrdiff_t> /*l*/) {
     // todo: add assertion
   }
+#endif
 
   template <typename T> Sizes& operator = (const T& /*other*/) {
     // add assertion failure if the size of other is different
@@ -172,16 +166,28 @@ template <std::ptrdiff_t V1=0, std::ptrdiff_t V2=0, std::ptrdiff_t V3=0, std::pt
   explicit Sizes(const array<DenseIndex, Base::count>& /*indices*/) {
     // todo: add assertion
   }
-
   template <typename T> Sizes& operator = (const T& /*other*/) {
     // add assertion failure if the size of other is different
     return *this;
   }
 
+#if EIGEN_HAS_VARIADIC_TEMPLATES
   template <typename... DenseIndex> Sizes(DenseIndex... /*indices*/) { }
   explicit Sizes(std::initializer_list<std::ptrdiff_t>) {
     // todo: add assertion
   }
+#else
+  EIGEN_DEVICE_FUNC explicit Sizes(const DenseIndex) {
+  }
+  EIGEN_DEVICE_FUNC Sizes(const DenseIndex, const DenseIndex) {
+  }
+  EIGEN_DEVICE_FUNC Sizes(const DenseIndex, const DenseIndex, const DenseIndex) {
+  }
+  EIGEN_DEVICE_FUNC Sizes(const DenseIndex, const DenseIndex, const DenseIndex, const DenseIndex) {
+  }
+  EIGEN_DEVICE_FUNC Sizes(const DenseIndex, const DenseIndex, const DenseIndex, const DenseIndex, const DenseIndex) {
+  }
+#endif
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index operator[] (const Index index) const {
     switch (index) {
@@ -245,9 +251,17 @@ struct tensor_index_linearization_helper<Index, NumIndices, 0, RowMajor>
 };
 }  // end namespace internal
 
-
-
-// Dynamic size
+/** \internal
+ *
+ * \ingroup CXX11_Tensor_Module
+ *
+ * \brief Dynamic dimensions of a Tensor.
+ *
+ * The DSizes class is its dynamic sibling: the number of dimensions is known
+ * at compile time but the sizes are set during execution.
+ *
+ * \sa Tensor
+ */
 template <typename DenseIndex, int NumDims>
 struct DSizes : array<DenseIndex, NumDims> {
   typedef array<DenseIndex, NumDims> Base;
@@ -285,19 +299,20 @@ struct DSizes : array<DenseIndex, NumDims> {
   EIGEN_DEVICE_FUNC
   explicit DSizes(const array<OtherIndex, NumDims>& other,
                   // Default template parameters require c++11.
-                  std::enable_if_t<
+                  typename internal::enable_if<
                      internal::is_same<
                          DenseIndex,
                          typename internal::promote_index_type<
                              DenseIndex,
                              OtherIndex
                          >::type
-                     >::value, void*> = 0) {
+                     >::value, void*>::type = 0) {
     for (int i = 0; i < NumDims; ++i) {
       (*this)[i] = static_cast<DenseIndex>(other[i]);
     }
   }
 
+#ifdef EIGEN_HAS_INDEX_LIST
   template <typename FirstType, typename... OtherTypes>
   EIGEN_DEVICE_FUNC
   explicit DSizes(const Eigen::IndexList<FirstType, OtherTypes...>& dimensions) {
@@ -305,6 +320,7 @@ struct DSizes : array<DenseIndex, NumDims> {
       (*this)[i] = dimensions[i];
     }
   }
+#endif
 
 #ifndef EIGEN_EMULATE_CXX11_META_H
   template <typename std::ptrdiff_t... Indices>
@@ -322,10 +338,39 @@ struct DSizes : array<DenseIndex, NumDims> {
   }
 #endif
 
+#if EIGEN_HAS_VARIADIC_TEMPLATES
   template<typename... IndexTypes> EIGEN_DEVICE_FUNC
   EIGEN_STRONG_INLINE explicit DSizes(DenseIndex firstDimension, DenseIndex secondDimension, IndexTypes... otherDimensions) : Base({{firstDimension, secondDimension, otherDimensions...}}) {
     EIGEN_STATIC_ASSERT(sizeof...(otherDimensions) + 2 == NumDims, YOU_MADE_A_PROGRAMMING_MISTAKE)
   }
+#else
+  EIGEN_DEVICE_FUNC DSizes(const DenseIndex i0, const DenseIndex i1) {
+    eigen_assert(NumDims == 2);
+    (*this)[0] = i0;
+    (*this)[1] = i1;
+  }
+  EIGEN_DEVICE_FUNC DSizes(const DenseIndex i0, const DenseIndex i1, const DenseIndex i2) {
+    eigen_assert(NumDims == 3);
+    (*this)[0] = i0;
+    (*this)[1] = i1;
+    (*this)[2] = i2;
+  }
+  EIGEN_DEVICE_FUNC DSizes(const DenseIndex i0, const DenseIndex i1, const DenseIndex i2, const DenseIndex i3) {
+    eigen_assert(NumDims == 4);
+    (*this)[0] = i0;
+    (*this)[1] = i1;
+    (*this)[2] = i2;
+    (*this)[3] = i3;
+  }
+  EIGEN_DEVICE_FUNC DSizes(const DenseIndex i0, const DenseIndex i1, const DenseIndex i2, const DenseIndex i3, const DenseIndex i4) {
+    eigen_assert(NumDims == 5);
+    (*this)[0] = i0;
+    (*this)[1] = i1;
+    (*this)[2] = i2;
+    (*this)[3] = i3;
+    (*this)[4] = i4;
+  }
+#endif
 
   EIGEN_DEVICE_FUNC DSizes& operator = (const array<DenseIndex, NumDims>& other) {
     *static_cast<Base*>(this) = other;
@@ -424,7 +469,7 @@ struct sizes_match_below_dim {
 template <typename Dims1, typename Dims2, ptrdiff_t n>
 struct sizes_match_below_dim<Dims1, Dims2, n, n> {
   static EIGEN_DEVICE_FUNC  EIGEN_STRONG_INLINE bool run(Dims1& dims1, Dims2& dims2) {
-    return numext::equal_strict(array_get<n - 1>(dims1), array_get<n - 1>(dims2)) &&
+    return (array_get<n-1>(dims1) == array_get<n-1>(dims2)) &&
         sizes_match_below_dim<Dims1, Dims2, n-1, n-1>::run(dims1, dims2);
   }
 };

@@ -10,9 +10,6 @@
 #ifndef EIGEN_CXX11_TENSOR_TENSOR_REDUCTION_GPU_H
 #define EIGEN_CXX11_TENSOR_TENSOR_REDUCTION_GPU_H
 
-// IWYU pragma: private
-#include "./InternalHeaderCheck.h"
-
 namespace Eigen {
 namespace internal {
 
@@ -53,7 +50,7 @@ __device__ EIGEN_ALWAYS_INLINE void atomicReduce(T* output, T accum, R& reducer)
       return;
     }
     unsigned long long readback;
-    while ((readback = atomicCAS(reinterpret_cast<unsigned long long*>(output), oldval, newval)) != oldval) {
+    while ((readback = atomicCAS((unsigned long long*)output, oldval, newval)) != oldval) {
       oldval = readback;
       newval = oldval;
       reducer.reduce(accum, reinterpret_cast<T*>(&newval));
@@ -66,9 +63,6 @@ __device__ EIGEN_ALWAYS_INLINE void atomicReduce(T* output, T accum, R& reducer)
     gpu_assert(0 && "Wordsize not supported");
   }
 #else // EIGEN_CUDA_ARCH >= 300
-  EIGEN_UNUSED_VARIABLE(output);
-  EIGEN_UNUSED_VARIABLE(accum);
-  EIGEN_UNUSED_VARIABLE(reducer);
   gpu_assert(0 && "Shouldn't be called on unsupported device");
 #endif // EIGEN_CUDA_ARCH >= 300
 }
@@ -122,8 +116,6 @@ __device__ inline void atomicReduce(float* output, float accum, SumReducer<float
 #if (defined(EIGEN_HIP_DEVICE_COMPILE) && defined(__HIP_ARCH_HAS_WARP_SHUFFLE__)) || (EIGEN_CUDA_ARCH >= 300)
   atomicAdd(output, accum);
 #else // EIGEN_CUDA_ARCH >= 300
-  EIGEN_UNUSED_VARIABLE(output);
-  EIGEN_UNUSED_VARIABLE(accum);
   gpu_assert(0 && "Shouldn't be called on unsupported device");
 #endif // EIGEN_CUDA_ARCH >= 300
 }
@@ -215,11 +207,6 @@ __global__ EIGEN_HIP_LAUNCH_BOUNDS_1024 void FullReductionKernel(Reducer reducer
 #endif
   }
 #else // EIGEN_CUDA_ARCH >= 300
-  EIGEN_UNUSED_VARIABLE(reducer);
-  EIGEN_UNUSED_VARIABLE(input);
-  EIGEN_UNUSED_VARIABLE(num_coeffs);
-  EIGEN_UNUSED_VARIABLE(output);
-  EIGEN_UNUSED_VARIABLE(semaphore);
   gpu_assert(0 && "Shouldn't be called on unsupported device");
 #endif // EIGEN_CUDA_ARCH >= 300
 }
@@ -254,7 +241,7 @@ __global__ EIGEN_HIP_LAUNCH_BOUNDS_1024 void ReductionInitFullReduxKernelHalfFlo
 
 template <typename Self,
           typename Reducer, typename Index>
-__global__ EIGEN_HIP_LAUNCH_BOUNDS_1024 void ReductionInitKernelHalfFloat(Reducer reducer, const Self /*input*/, Index num_coeffs, half* output) {
+__global__ EIGEN_HIP_LAUNCH_BOUNDS_1024 void ReductionInitKernelHalfFloat(Reducer reducer, const Self input, Index num_coeffs, half* output) {
   const Index thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   const Index num_threads = blockDim.x * gridDim.x;
   typedef typename packet_traits<Eigen::half>::type PacketType;
@@ -405,16 +392,16 @@ struct FullReductionLauncher {
 template <typename Self, typename Op, typename OutputType, bool PacketAccess>
 struct FullReductionLauncher<
     Self, Op, OutputType, PacketAccess,
-    std::enable_if_t<
+    typename internal::enable_if<
       internal::is_same<float, OutputType>::value ||
       internal::is_same<double, OutputType>::value,
-    void>> {
+    void>::type> {
   static void run(const Self& self, Op& reducer, const GpuDevice& device, OutputType* output, typename Self::Index num_coeffs) {
 
     typedef typename Self::Index Index;
     const int block_size = 256;
     const int num_per_thread = 128;
-    const int num_blocks = numext::div_ceil<int>(num_coeffs, block_size * num_per_thread);
+    const int num_blocks = divup<int>(num_coeffs, block_size * num_per_thread);
 
     unsigned int* semaphore = NULL;
     if (num_blocks > 1) {
@@ -441,7 +428,7 @@ struct FullReductionLauncher<Self, Op, Eigen::half, true> {
 
     const int block_size = 256;
     const int num_per_thread = 128;
-    const int num_blocks = numext::div_ceil<int>(num_coeffs, block_size * num_per_thread);
+    const int num_blocks = divup<int>(num_coeffs, block_size * num_per_thread);
     half* scratch = static_cast<half*>(device.scratchpad());
 
     if (num_blocks > 1) {
@@ -469,12 +456,12 @@ struct FullReducer<Self, Op, GpuDevice, Vectorizable> {
   // so reduce the scope of the optimized version of the code to the simple cases
   // of doubles, floats and half floats
 #ifdef EIGEN_HAS_GPU_FP16
-  static constexpr bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
+  static const bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
       (internal::is_same<typename Self::CoeffReturnType, float>::value ||
        internal::is_same<typename Self::CoeffReturnType, double>::value ||
        (internal::is_same<typename Self::CoeffReturnType, Eigen::half>::value && reducer_traits<Op, GpuDevice>::PacketAccess));
 #else // EIGEN_HAS_GPU_FP16
-  static constexpr bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
+  static const bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
                                                 (internal::is_same<typename Self::CoeffReturnType, float>::value ||
                                                  internal::is_same<typename Self::CoeffReturnType, double>::value);
 #endif // EIGEN_HAS_GPU_FP16
@@ -507,7 +494,7 @@ __global__ EIGEN_HIP_LAUNCH_BOUNDS_1024 void InnerReductionKernel(Reducer reduce
   const int unroll_times = 16;
   eigen_assert(NumPerThread % unroll_times == 0);
 
-  const Index input_col_blocks = numext::div_ceil<Index>(num_coeffs_to_reduce, blockDim.x * NumPerThread);
+  const Index input_col_blocks = divup<Index>(num_coeffs_to_reduce, blockDim.x * NumPerThread);
   const Index num_input_blocks = input_col_blocks * num_preserved_coeffs;
 
   const Index num_threads = blockDim.x * gridDim.x;
@@ -593,8 +580,8 @@ __global__ EIGEN_HIP_LAUNCH_BOUNDS_1024 void InnerReductionKernelHalfFloat(Reduc
   eigen_assert(NumPerThread % unroll_times == 0);
   eigen_assert(unroll_times % 2 == 0);
 
-  const Index input_col_blocks = numext::div_ceil<Index>(num_coeffs_to_reduce, blockDim.x * NumPerThread * 2);
-  const Index num_input_blocks = numext::div_ceil<Index>(input_col_blocks * num_preserved_coeffs, 2);
+  const Index input_col_blocks = divup<Index>(num_coeffs_to_reduce, blockDim.x * NumPerThread * 2);
+  const Index num_input_blocks = divup<Index>(input_col_blocks * num_preserved_coeffs, 2);
 
   const Index num_threads = blockDim.x * gridDim.x;
   const Index thread_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -726,11 +713,11 @@ __global__ EIGEN_HIP_LAUNCH_BOUNDS_1024 void InnerReductionKernelHalfFloat(Reduc
         half2* hr2 = reinterpret_cast<half2*>(&r2);
         half2* rr1 = reinterpret_cast<half2*>(&reduced_val1);
         half2* rr2 = reinterpret_cast<half2*>(&reduced_val2);
-        for (int j = 0; j < packet_width / 2; j++) {
-          hr1[j] =
-              __shfl_down_sync(0xFFFFFFFF, rr1[j], (unsigned)offset, warpSize);
-          hr2[j] =
-              __shfl_down_sync(0xFFFFFFFF, rr2[j], (unsigned)offset, warpSize);
+        for (int i = 0; i < packet_width / 2; i++) {
+          hr1[i] =
+              __shfl_down_sync(0xFFFFFFFF, rr1[i], (unsigned)offset, warpSize);
+          hr2[i] =
+              __shfl_down_sync(0xFFFFFFFF, rr2[i], (unsigned)offset, warpSize);
         }
         reducer.reducePacket(r1, &reduced_val1);
         reducer.reducePacket(r2, &reduced_val2);
@@ -755,7 +742,7 @@ __global__ EIGEN_HIP_LAUNCH_BOUNDS_1024 void InnerReductionKernelHalfFloat(Reduc
       val = __halves2half2(val1, val2);
       if ((threadIdx.x & (warpSize - 1)) == 0) {
         half* loc = output + row;
-        atomicReduce(reinterpret_cast<half2*>(loc), val, reducer);
+        atomicReduce((half2*)loc, val, reducer);
       }
     }
   }
@@ -775,17 +762,17 @@ struct InnerReductionLauncher {
 template <typename Self, typename Op, typename OutputType, bool PacketAccess>
 struct InnerReductionLauncher<
   Self, Op, OutputType, PacketAccess,
-  std::enable_if_t<
+  typename internal::enable_if<
     internal::is_same<float, OutputType>::value ||
     internal::is_same<double, OutputType>::value,
-  void>> {
+  void>::type> {
   static bool run(const Self& self, Op& reducer, const GpuDevice& device, OutputType* output, typename Self::Index num_coeffs_to_reduce, typename Self::Index num_preserved_vals) {
     typedef typename Self::Index Index;
 
     const Index num_coeffs = num_coeffs_to_reduce * num_preserved_vals;
     const int block_size = 256;
     const int num_per_thread = 128;
-    const int dyn_blocks = numext::div_ceil<int>(num_coeffs, block_size * num_per_thread);
+    const int dyn_blocks = divup<int>(num_coeffs, block_size * num_per_thread);
     const int max_blocks = device.getNumGpuMultiProcessors() *
                            device.maxGpuThreadsPerMultiProcessor() / block_size;
     const int num_blocks = numext::mini<int>(max_blocks, dyn_blocks);
@@ -793,12 +780,12 @@ struct InnerReductionLauncher<
     if (num_blocks > 1) {
       // We initialize the outputs outside the reduction kernel when we can't be sure that there
       // won't be a race conditions between multiple thread blocks.
-      const int dyn_blocks2 = numext::div_ceil<int>(num_preserved_vals, 1024);
-      const int max_blocks2 = device.getNumGpuMultiProcessors() *
+      const int dyn_blocks = divup<int>(num_preserved_vals, 1024);
+      const int max_blocks = device.getNumGpuMultiProcessors() *
                            device.maxGpuThreadsPerMultiProcessor() / 1024;
-      const int num_blocks2 = numext::mini<int>(max_blocks2, dyn_blocks2);
+      const int num_blocks = numext::mini<int>(max_blocks, dyn_blocks);
       LAUNCH_GPU_KERNEL((ReductionInitKernel<OutputType, Index>),
-                         num_blocks2, 1024, 0, device, reducer.initialize(),
+                         num_blocks, 1024, 0, device, reducer.initialize(),
                          num_preserved_vals, output);
     }
 
@@ -831,7 +818,7 @@ struct InnerReductionLauncher<Self, Op, Eigen::half, true> {
     const Index num_coeffs = num_coeffs_to_reduce * num_preserved_vals;
     const int block_size = /*256*/128;
     const int num_per_thread = /*128*/64;
-    const int dyn_blocks = numext::div_ceil<int>(num_coeffs, block_size * num_per_thread);
+    const int dyn_blocks = divup<int>(num_coeffs, block_size * num_per_thread);
     const int max_blocks = device.getNumGpuMultiProcessors() *
                            device.maxGpuThreadsPerMultiProcessor() / block_size;
     const int num_blocks = numext::mini<int>(max_blocks, dyn_blocks);
@@ -858,12 +845,12 @@ struct InnerReducer<Self, Op, GpuDevice> {
   // so reduce the scope of the optimized version of the code to the simple case
   // of floats and half floats.
 #ifdef EIGEN_HAS_GPU_FP16
-  static constexpr bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
+  static const bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
       (internal::is_same<typename Self::CoeffReturnType, float>::value ||
        internal::is_same<typename Self::CoeffReturnType, double>::value ||
        (internal::is_same<typename Self::CoeffReturnType, Eigen::half>::value && reducer_traits<Op, GpuDevice>::PacketAccess));
 #else // EIGEN_HAS_GPU_FP16
-  static constexpr bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
+  static const bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
                                                  (internal::is_same<typename Self::CoeffReturnType, float>::value ||
                                                   internal::is_same<typename Self::CoeffReturnType, double>::value);
 #endif // EIGEN_HAS_GPU_FP16
@@ -900,7 +887,7 @@ __global__ EIGEN_HIP_LAUNCH_BOUNDS_1024 void OuterReductionKernel(Reducer reduce
   }
 
   // Do the reduction.
-  const Index max_iter = num_preserved_coeffs * numext::div_ceil<Index>(num_coeffs_to_reduce, NumPerThread);
+  const Index max_iter = num_preserved_coeffs * divup<Index>(num_coeffs_to_reduce, NumPerThread);
   for (Index i = thread_id; i < max_iter; i += num_threads) {
     const Index input_col = i % num_preserved_coeffs;
     const Index input_row = (i / num_preserved_coeffs) * NumPerThread;
@@ -920,7 +907,7 @@ struct OuterReducer<Self, Op, GpuDevice> {
   // Unfortunately nvidia doesn't support well exotic types such as complex,
   // so reduce the scope of the optimized version of the code to the simple case
   // of floats.
-  static constexpr bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
+  static const bool HasOptimizedImplementation = !Self::ReducerTraits::IsStateful &&
                                                  (internal::is_same<typename Self::CoeffReturnType, float>::value ||
                                                   internal::is_same<typename Self::CoeffReturnType, double>::value);
   template <typename Device, typename OutputType>
@@ -953,7 +940,7 @@ struct OuterReducer<Self, Op, GpuDevice> {
     const Index num_coeffs = num_coeffs_to_reduce * num_preserved_vals;
     const int block_size = 256;
     const int num_per_thread = 16;
-    const int dyn_blocks = numext::div_ceil<int>(num_coeffs, block_size * num_per_thread);
+    const int dyn_blocks = divup<int>(num_coeffs, block_size * num_per_thread);
     const int max_blocks = device.getNumGpuMultiProcessors() *
                            device.maxGpuThreadsPerMultiProcessor() / block_size;
     const int num_blocks = numext::mini<int>(max_blocks, dyn_blocks);
@@ -961,12 +948,12 @@ struct OuterReducer<Self, Op, GpuDevice> {
     if (num_blocks > 1) {
       // We initialize the outputs in the reduction kernel itself when we don't have to worry
       // about race conditions between multiple thread blocks.
-      const int dyn_blocks2 = numext::div_ceil<int>(num_preserved_vals, 1024);
-      const int max_blocks2 = device.getNumGpuMultiProcessors() *
+      const int dyn_blocks = divup<int>(num_preserved_vals, 1024);
+      const int max_blocks = device.getNumGpuMultiProcessors() *
                              device.maxGpuThreadsPerMultiProcessor() / 1024;
-      const int num_blocks2 = numext::mini<int>(max_blocks2, dyn_blocks2);
+      const int num_blocks = numext::mini<int>(max_blocks, dyn_blocks);
       LAUNCH_GPU_KERNEL((ReductionInitKernel<float, Index>),
-                         num_blocks2, 1024, 0, device, reducer.initialize(),
+                         num_blocks, 1024, 0, device, reducer.initialize(),
                          num_preserved_vals, output);
     }
 

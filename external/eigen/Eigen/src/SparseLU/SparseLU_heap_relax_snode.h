@@ -28,9 +28,6 @@
 #ifndef SPARSELU_HEAP_RELAX_SNODE_H
 #define SPARSELU_HEAP_RELAX_SNODE_H
 
-// IWYU pragma: private
-#include "./InternalHeaderCheck.h"
-
 namespace Eigen {
 namespace internal {
 

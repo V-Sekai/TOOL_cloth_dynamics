@@ -9,6 +9,8 @@
 
 #include "main.h"
 
+#include <Eigen/src/Core/arch/Default/Half.h>
+
 #define VERIFY_HALF_BITS_EQUAL(h, bits) \
   VERIFY_IS_EQUAL((numext::bit_cast<numext::uint16_t>(h)), (static_cast<numext::uint16_t>(bits)))
 
@@ -155,12 +157,6 @@ void test_numtraits()
   VERIFY( (std::numeric_limits<half>::denorm_min)() > half(0.f) );
   VERIFY( (std::numeric_limits<half>::min)()/half(2) > half(0.f) );
   VERIFY_IS_EQUAL( (std::numeric_limits<half>::denorm_min)()/half(2), half(0.f) );
-
-  // Test to see that we are able to link against the symbols for digits and
-  // digits10.
-  volatile const int& digits10 = std::numeric_limits<half>::digits10;
-  volatile const int& digits = std::numeric_limits<half>::digits;
-  VERIFY( (digits10) != (digits) );
 }
 
 void test_arithmetic()
@@ -228,7 +224,7 @@ void test_comparison()
 
 void test_basic_functions()
 {
-  constexpr float PI = static_cast<float>(EIGEN_PI);
+  const float PI = static_cast<float>(EIGEN_PI);
 
   VERIFY_IS_EQUAL(float(numext::abs(half(3.5f))), 3.5f);
   VERIFY_IS_EQUAL(float(abs(half(3.5f))), 3.5f);
@@ -283,7 +279,7 @@ void test_basic_functions()
 
 void test_trigonometric_functions()
 {
-  constexpr float PI = static_cast<float>(EIGEN_PI);
+  const float PI = static_cast<float>(EIGEN_PI);
   VERIFY_IS_APPROX(numext::cos(half(0.0f)), half(cosf(0.0f)));
   VERIFY_IS_APPROX(cos(half(0.0f)), half(cosf(0.0f)));
   VERIFY_IS_APPROX(numext::cos(half(PI)), half(cosf(PI)));

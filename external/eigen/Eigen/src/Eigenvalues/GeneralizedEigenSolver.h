@@ -14,9 +14,6 @@
 
 #include "./RealQZ.h"
 
-// IWYU pragma: private
-#include "./InternalHeaderCheck.h"
-
 namespace Eigen { 
 
 /** \eigenvalues_module \ingroup Eigenvalues_Module
@@ -26,7 +23,7 @@ namespace Eigen {
   *
   * \brief Computes the generalized eigenvalues and eigenvectors of a pair of general matrices
   *
-  * \tparam MatrixType_ the type of the matrices of which we are computing the
+  * \tparam _MatrixType the type of the matrices of which we are computing the
   * eigen-decomposition; this is expected to be an instantiation of the Matrix
   * class template. Currently, only real matrices are supported.
   *
@@ -58,12 +55,12 @@ namespace Eigen {
   *
   * \sa MatrixBase::eigenvalues(), class ComplexEigenSolver, class SelfAdjointEigenSolver
   */
-template<typename MatrixType_> class GeneralizedEigenSolver
+template<typename _MatrixType> class GeneralizedEigenSolver
 {
   public:
 
-    /** \brief Synonym for the template parameter \p MatrixType_. */
-    typedef MatrixType_ MatrixType;
+    /** \brief Synonym for the template parameter \p _MatrixType. */
+    typedef _MatrixType MatrixType;
 
     enum {
       RowsAtCompileTime = MatrixType::RowsAtCompileTime,
@@ -214,7 +211,7 @@ template<typename MatrixType_> class GeneralizedEigenSolver
       * This vector permits to reconstruct the j-th eigenvalues as alphas(i)/betas(j).
       *
       * \sa betas(), eigenvalues() */
-    const ComplexVectorType& alphas() const
+    ComplexVectorType alphas() const
     {
       eigen_assert(info() == Success && "GeneralizedEigenSolver failed to compute alphas.");
       return m_alphas;
@@ -225,7 +222,7 @@ template<typename MatrixType_> class GeneralizedEigenSolver
       * This vector permits to reconstruct the j-th eigenvalues as alphas(i)/betas(j).
       *
       * \sa alphas(), eigenvalues() */
-    const VectorType& betas() const
+    VectorType betas() const
     {
       eigen_assert(info() == Success && "GeneralizedEigenSolver failed to compute betas.");
       return m_betas;
@@ -271,10 +268,13 @@ template<typename MatrixType_> class GeneralizedEigenSolver
     }
 
   protected:
-
-    EIGEN_STATIC_ASSERT_NON_INTEGER(Scalar)
-    EIGEN_STATIC_ASSERT(!NumTraits<Scalar>::IsComplex, NUMERIC_TYPE_MUST_BE_REAL)
-
+    
+    static void check_template_parameters()
+    {
+      EIGEN_STATIC_ASSERT_NON_INTEGER(Scalar);
+      EIGEN_STATIC_ASSERT(!NumTraits<Scalar>::IsComplex, NUMERIC_TYPE_MUST_BE_REAL);
+    }
+    
     EigenvectorsType m_eivec;
     ComplexVectorType m_alphas;
     VectorType m_betas;
@@ -288,6 +288,8 @@ template<typename MatrixType>
 GeneralizedEigenSolver<MatrixType>&
 GeneralizedEigenSolver<MatrixType>::compute(const MatrixType& A, const MatrixType& B, bool computeEigenvectors)
 {
+  check_template_parameters();
+  
   using std::sqrt;
   using std::abs;
   eigen_assert(A.cols() == A.rows() && B.cols() == A.rows() && B.cols() == B.rows());

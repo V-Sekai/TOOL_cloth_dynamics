@@ -26,7 +26,7 @@
 // for packet_traits<Packet*>
 // => The only workaround would be to wrap _m128 and the likes
 //    within wrappers.
-#if EIGEN_GNUC_STRICT_AT_LEAST(6,0,0)
+#if EIGEN_GNUC_AT_LEAST(6,0)
     #pragma GCC diagnostic ignored "-Wignored-attributes"
 #endif
 
@@ -243,11 +243,11 @@ struct vectorization_logic
             >(InnerVectorizedTraversal,CompleteUnrolling)));
 
     VERIFY((test_assign<
-            Map<Matrix<Scalar, internal::plain_enum_max(2,PacketSize), internal::plain_enum_max(2, PacketSize)>, AlignedMax, InnerStride<3*PacketSize> >,
-            Matrix<Scalar, internal::plain_enum_max(2, PacketSize), internal::plain_enum_max(2, PacketSize)>
+            Map<Matrix<Scalar,EIGEN_PLAIN_ENUM_MAX(2,PacketSize),EIGEN_PLAIN_ENUM_MAX(2,PacketSize)>, AlignedMax, InnerStride<3*PacketSize> >,
+            Matrix<Scalar,EIGEN_PLAIN_ENUM_MAX(2,PacketSize),EIGEN_PLAIN_ENUM_MAX(2,PacketSize)>
             >(DefaultTraversal,PacketSize>=8?InnerUnrolling:CompleteUnrolling)));
 
-    VERIFY((test_assign(Matrix11(), Matrix<Scalar,PacketSize, internal::plain_enum_min(2, PacketSize)>()*Matrix<Scalar, internal::plain_enum_min(2, PacketSize),PacketSize>(),
+    VERIFY((test_assign(Matrix11(), Matrix<Scalar,PacketSize,EIGEN_PLAIN_ENUM_MIN(2,PacketSize)>()*Matrix<Scalar,EIGEN_PLAIN_ENUM_MIN(2,PacketSize),PacketSize>(),
                         InnerVectorizedTraversal, CompleteUnrolling)));
     #endif
 
@@ -270,18 +270,19 @@ struct vectorization_logic_half
 {
   typedef internal::packet_traits<Scalar> PacketTraits;
   typedef typename internal::unpacket_traits<typename internal::packet_traits<Scalar>::type>::half PacketType;
-  static constexpr int PacketSize = internal::unpacket_traits<PacketType>::size;
-
+  enum {
+    PacketSize = internal::unpacket_traits<PacketType>::size
+  };
   static void run()
   {
     // Some half-packets have a byte size < EIGEN_MIN_ALIGN_BYTES (e.g. Packet2f),
     // which causes many of these tests to fail since they don't vectorize if
     // EIGEN_UNALIGNED_VECTORIZE is 0 (the matrix is assumed unaligned).
     // Adjust the matrix sizes to account for these alignment issues.
-    constexpr int PacketBytes = sizeof(Scalar)*PacketSize;
-    constexpr int MinVSize = int(EIGEN_UNALIGNED_VECTORIZE) ? PacketSize
-                             : PacketBytes >= EIGEN_MIN_ALIGN_BYTES ? PacketSize
-                             : (EIGEN_MIN_ALIGN_BYTES + sizeof(Scalar) - 1) / sizeof(Scalar);
+    enum { PacketBytes = sizeof(Scalar)*PacketSize };
+    enum { MinVSize = EIGEN_UNALIGNED_VECTORIZE ? int(PacketSize)
+                             : int(PacketBytes) >= EIGEN_MIN_ALIGN_BYTES ? int(PacketSize)
+                             : (EIGEN_MIN_ALIGN_BYTES + sizeof(Scalar) - 1) / sizeof(Scalar) };
     
     typedef Matrix<Scalar,MinVSize,1> Vector1;
     typedef Matrix<Scalar,MinVSize,MinVSize> Matrix11;
@@ -377,10 +378,9 @@ struct vectorization_logic_half
     }
 
     VERIFY((test_assign<
-            Map<Matrix<Scalar, internal::plain_enum_max(2, PacketSize), internal::plain_enum_max(2, PacketSize)>,
-                AlignedMax, InnerStride<3 * PacketSize> >,
-            Matrix<Scalar, internal::plain_enum_max(2, PacketSize), internal::plain_enum_max(2, PacketSize)> >(
-        DefaultTraversal, PacketSize > 4 ? InnerUnrolling : CompleteUnrolling)));
+            Map<Matrix<Scalar,EIGEN_PLAIN_ENUM_MAX(2,PacketSize),EIGEN_PLAIN_ENUM_MAX(2,PacketSize)>, AlignedMax, InnerStride<3*PacketSize> >,
+            Matrix<Scalar,EIGEN_PLAIN_ENUM_MAX(2,PacketSize),EIGEN_PLAIN_ENUM_MAX(2,PacketSize)>
+            >(DefaultTraversal,PacketSize>4?InnerUnrolling:CompleteUnrolling)));
 
     VERIFY((test_assign(Matrix57(), Matrix<Scalar, 5 * MinVSize, 3>() * Matrix<Scalar, 3, 7>(),
                         InnerVectorizedTraversal, InnerUnrolling + CompleteUnrolling)));
@@ -413,19 +413,19 @@ EIGEN_DECLARE_TEST(vectorization_logic)
   if(internal::packet_traits<float>::Vectorizable)
   {
     VERIFY(test_assign(Matrix<float,3,3>(),Matrix<float,3,3>()+Matrix<float,3,3>(),
-      internal::packet_traits<float>::Vectorizable && EIGEN_UNALIGNED_VECTORIZE ? LinearVectorizedTraversal : LinearTraversal,CompleteUnrolling));
+      EIGEN_UNALIGNED_VECTORIZE ? LinearVectorizedTraversal : LinearTraversal,CompleteUnrolling));
       
     VERIFY(test_redux(Matrix<float,5,2>(),
-      internal::packet_traits<float>::Vectorizable && EIGEN_UNALIGNED_VECTORIZE ? LinearVectorizedTraversal : LinearTraversal,CompleteUnrolling));
+      EIGEN_UNALIGNED_VECTORIZE ? LinearVectorizedTraversal : DefaultTraversal,CompleteUnrolling));
   }
   
   if(internal::packet_traits<double>::Vectorizable)
   {
     VERIFY(test_assign(Matrix<double,3,3>(),Matrix<double,3,3>()+Matrix<double,3,3>(),
-      internal::packet_traits<double>::Vectorizable && EIGEN_UNALIGNED_VECTORIZE ? LinearVectorizedTraversal : LinearTraversal,CompleteUnrolling));
+      EIGEN_UNALIGNED_VECTORIZE ? LinearVectorizedTraversal : LinearTraversal,CompleteUnrolling));
     
     VERIFY(test_redux(Matrix<double,7,3>(),
-      internal::packet_traits<double>::Vectorizable && EIGEN_UNALIGNED_VECTORIZE ? LinearVectorizedTraversal : LinearTraversal,CompleteUnrolling));
+      EIGEN_UNALIGNED_VECTORIZE ? LinearVectorizedTraversal : DefaultTraversal,CompleteUnrolling));
   }
 #endif // EIGEN_VECTORIZE
 

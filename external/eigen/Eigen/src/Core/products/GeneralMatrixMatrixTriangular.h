@@ -10,9 +10,6 @@
 #ifndef EIGEN_GENERAL_MATRIX_MATRIX_TRIANGULAR_H
 #define EIGEN_GENERAL_MATRIX_MATRIX_TRIANGULAR_H
 
-// IWYU pragma: private
-#include "../InternalHeaderCheck.h"
-
 namespace Eigen { 
 
 template<typename Scalar, typename Index, int StorageOrder, int UpLo, bool ConjLhs, bool ConjRhs>
@@ -145,7 +142,7 @@ struct tribb_kernel
   typedef typename Traits::ResScalar ResScalar;
 
   enum {
-    BlockSize  = meta_least_common_multiple<plain_enum_max(mr, nr), plain_enum_min(mr,nr)>::ret
+    BlockSize  = meta_least_common_multiple<EIGEN_PLAIN_ENUM_MAX(mr,nr),EIGEN_PLAIN_ENUM_MIN(mr,nr)>::ret
   };
   void operator()(ResScalar* res_, Index resIncr, Index resStride, const LhsScalar* blockA, const RhsScalar* blockB, Index size, Index depth, const ResScalar& alpha)
   {
@@ -211,17 +208,17 @@ struct general_product_to_triangular_selector<MatrixType,ProductType,UpLo,true>
   {
     typedef typename MatrixType::Scalar Scalar;
     
-    typedef internal::remove_all_t<typename ProductType::LhsNested> Lhs;
+    typedef typename internal::remove_all<typename ProductType::LhsNested>::type Lhs;
     typedef internal::blas_traits<Lhs> LhsBlasTraits;
     typedef typename LhsBlasTraits::DirectLinearAccessType ActualLhs;
-    typedef internal::remove_all_t<ActualLhs> ActualLhs_;
-    internal::add_const_on_value_type_t<ActualLhs> actualLhs = LhsBlasTraits::extract(prod.lhs());
+    typedef typename internal::remove_all<ActualLhs>::type _ActualLhs;
+    typename internal::add_const_on_value_type<ActualLhs>::type actualLhs = LhsBlasTraits::extract(prod.lhs());
     
-    typedef internal::remove_all_t<typename ProductType::RhsNested> Rhs;
+    typedef typename internal::remove_all<typename ProductType::RhsNested>::type Rhs;
     typedef internal::blas_traits<Rhs> RhsBlasTraits;
     typedef typename RhsBlasTraits::DirectLinearAccessType ActualRhs;
-    typedef internal::remove_all_t<ActualRhs> ActualRhs_;
-    internal::add_const_on_value_type_t<ActualRhs> actualRhs = RhsBlasTraits::extract(prod.rhs());
+    typedef typename internal::remove_all<ActualRhs>::type _ActualRhs;
+    typename internal::add_const_on_value_type<ActualRhs>::type actualRhs = RhsBlasTraits::extract(prod.rhs());
 
     Scalar actualAlpha = alpha * LhsBlasTraits::extractScalarFactor(prod.lhs().derived()) * RhsBlasTraits::extractScalarFactor(prod.rhs().derived());
 
@@ -230,19 +227,19 @@ struct general_product_to_triangular_selector<MatrixType,ProductType,UpLo,true>
 
     enum {
       StorageOrder = (internal::traits<MatrixType>::Flags&RowMajorBit) ? RowMajor : ColMajor,
-      UseLhsDirectly = ActualLhs_::InnerStrideAtCompileTime==1,
-      UseRhsDirectly = ActualRhs_::InnerStrideAtCompileTime==1
+      UseLhsDirectly = _ActualLhs::InnerStrideAtCompileTime==1,
+      UseRhsDirectly = _ActualRhs::InnerStrideAtCompileTime==1
     };
     
     internal::gemv_static_vector_if<Scalar,Lhs::SizeAtCompileTime,Lhs::MaxSizeAtCompileTime,!UseLhsDirectly> static_lhs;
     ei_declare_aligned_stack_constructed_variable(Scalar, actualLhsPtr, actualLhs.size(),
       (UseLhsDirectly ? const_cast<Scalar*>(actualLhs.data()) : static_lhs.data()));
-    if(!UseLhsDirectly) Map<typename ActualLhs_::PlainObject>(actualLhsPtr, actualLhs.size()) = actualLhs;
+    if(!UseLhsDirectly) Map<typename _ActualLhs::PlainObject>(actualLhsPtr, actualLhs.size()) = actualLhs;
     
     internal::gemv_static_vector_if<Scalar,Rhs::SizeAtCompileTime,Rhs::MaxSizeAtCompileTime,!UseRhsDirectly> static_rhs;
     ei_declare_aligned_stack_constructed_variable(Scalar, actualRhsPtr, actualRhs.size(),
       (UseRhsDirectly ? const_cast<Scalar*>(actualRhs.data()) : static_rhs.data()));
-    if(!UseRhsDirectly) Map<typename ActualRhs_::PlainObject>(actualRhsPtr, actualRhs.size()) = actualRhs;
+    if(!UseRhsDirectly) Map<typename _ActualRhs::PlainObject>(actualRhsPtr, actualRhs.size()) = actualRhs;
     
     
     selfadjoint_rank1_update<Scalar,Index,StorageOrder,UpLo,
@@ -257,17 +254,17 @@ struct general_product_to_triangular_selector<MatrixType,ProductType,UpLo,false>
 {
   static void run(MatrixType& mat, const ProductType& prod, const typename MatrixType::Scalar& alpha, bool beta)
   {
-    typedef internal::remove_all_t<typename ProductType::LhsNested> Lhs;
+    typedef typename internal::remove_all<typename ProductType::LhsNested>::type Lhs;
     typedef internal::blas_traits<Lhs> LhsBlasTraits;
     typedef typename LhsBlasTraits::DirectLinearAccessType ActualLhs;
-    typedef internal::remove_all_t<ActualLhs> ActualLhs_;
-    internal::add_const_on_value_type_t<ActualLhs> actualLhs = LhsBlasTraits::extract(prod.lhs());
+    typedef typename internal::remove_all<ActualLhs>::type _ActualLhs;
+    typename internal::add_const_on_value_type<ActualLhs>::type actualLhs = LhsBlasTraits::extract(prod.lhs());
     
-    typedef internal::remove_all_t<typename ProductType::RhsNested> Rhs;
+    typedef typename internal::remove_all<typename ProductType::RhsNested>::type Rhs;
     typedef internal::blas_traits<Rhs> RhsBlasTraits;
     typedef typename RhsBlasTraits::DirectLinearAccessType ActualRhs;
-    typedef internal::remove_all_t<ActualRhs> ActualRhs_;
-    internal::add_const_on_value_type_t<ActualRhs> actualRhs = RhsBlasTraits::extract(prod.rhs());
+    typedef typename internal::remove_all<ActualRhs>::type _ActualRhs;
+    typename internal::add_const_on_value_type<ActualRhs>::type actualRhs = RhsBlasTraits::extract(prod.rhs());
 
     typename ProductType::Scalar actualAlpha = alpha * LhsBlasTraits::extractScalarFactor(prod.lhs().derived()) * RhsBlasTraits::extractScalarFactor(prod.rhs().derived());
 
@@ -276,8 +273,8 @@ struct general_product_to_triangular_selector<MatrixType,ProductType,UpLo,false>
 
     enum {
       IsRowMajor = (internal::traits<MatrixType>::Flags&RowMajorBit) ? 1 : 0,
-      LhsIsRowMajor = ActualLhs_::Flags&RowMajorBit ? 1 : 0,
-      RhsIsRowMajor = ActualRhs_::Flags&RowMajorBit ? 1 : 0,
+      LhsIsRowMajor = _ActualLhs::Flags&RowMajorBit ? 1 : 0,
+      RhsIsRowMajor = _ActualRhs::Flags&RowMajorBit ? 1 : 0,
       SkipDiag = (UpLo&(UnitDiag|ZeroDiag))!=0
     };
 
@@ -287,7 +284,7 @@ struct general_product_to_triangular_selector<MatrixType,ProductType,UpLo,false>
     Index depth = actualLhs.cols();
 
     typedef internal::gemm_blocking_space<IsRowMajor ? RowMajor : ColMajor,typename Lhs::Scalar,typename Rhs::Scalar,
-          MatrixType::MaxColsAtCompileTime, MatrixType::MaxColsAtCompileTime, ActualRhs_::MaxColsAtCompileTime> BlockingType;
+          MatrixType::MaxColsAtCompileTime, MatrixType::MaxColsAtCompileTime, _ActualRhs::MaxColsAtCompileTime> BlockingType;
 
     BlockingType blocking(size, size, depth, 1, false);
 
@@ -303,14 +300,19 @@ struct general_product_to_triangular_selector<MatrixType,ProductType,UpLo,false>
   }
 };
 
-template<typename MatrixType, unsigned int UpLo>
-template<typename ProductType>
-EIGEN_DEVICE_FUNC TriangularView<MatrixType,UpLo>& TriangularViewImpl<MatrixType,UpLo,Dense>::_assignProduct(const ProductType& prod, const Scalar& alpha, bool beta)
-{
-  EIGEN_STATIC_ASSERT((UpLo&UnitDiag)==0, WRITING_TO_TRIANGULAR_PART_WITH_UNIT_DIAGONAL_IS_NOT_SUPPORTED);
+template <typename _MatrixType, unsigned int _Mode>
+template <typename ProductType>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE typename TriangularViewImpl<_MatrixType, _Mode, Dense>::TriangularViewType&
+TriangularViewImpl<_MatrixType, _Mode, Dense>::_assignProduct(
+    const ProductType& prod, const typename TriangularViewImpl<_MatrixType, _Mode, Dense>::Scalar& alpha, bool beta) {
+  EIGEN_STATIC_ASSERT((_Mode & UnitDiag) == 0, WRITING_TO_TRIANGULAR_PART_WITH_UNIT_DIAGONAL_IS_NOT_SUPPORTED);
   eigen_assert(derived().nestedExpression().rows() == prod.rows() && derived().cols() == prod.cols());
 
-  general_product_to_triangular_selector<MatrixType, ProductType, UpLo, internal::traits<ProductType>::InnerSize==1>::run(derived().nestedExpression().const_cast_derived(), prod, alpha, beta);
+  general_product_to_triangular_selector<_MatrixType, ProductType, _Mode,
+                                         internal::traits<ProductType>::InnerSize == 1>::run(derived()
+                                                                                                 .nestedExpression()
+                                                                                                 .const_cast_derived(),
+                                                                                             prod, alpha, beta);
 
   return derived();
 }

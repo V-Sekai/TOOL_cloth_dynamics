@@ -91,7 +91,15 @@ static void test_vectorized_broadcasting()
     }
   }
 
+#if EIGEN_HAS_VARIADIC_TEMPLATES
   tensor.resize(11,3,5);
+#else
+  array<Index, 3> new_dims;
+  new_dims[0] = 11;
+  new_dims[1] = 3;
+  new_dims[2] = 5;
+  tensor.resize(new_dims);
+#endif
 
   tensor.setRandom();
   broadcast = tensor.broadcast(broadcasts);
@@ -116,7 +124,15 @@ static void test_static_broadcasting()
   Tensor<float, 3, DataLayout> tensor(8,3,5);
   tensor.setRandom();
 
+#if defined(EIGEN_HAS_INDEX_LIST)
   Eigen::IndexList<Eigen::type2index<2>, Eigen::type2index<3>, Eigen::type2index<4>> broadcasts;
+#else
+  Eigen::array<int, 3> broadcasts;
+  broadcasts[0] = 2;
+  broadcasts[1] = 3;
+  broadcasts[2] = 4;
+#endif
+
   Tensor<float, 3, DataLayout> broadcast;
   broadcast = tensor.broadcast(broadcasts);
 
@@ -132,7 +148,15 @@ static void test_static_broadcasting()
     }
   }
 
+#if EIGEN_HAS_VARIADIC_TEMPLATES
   tensor.resize(11,3,5);
+#else
+  array<Index, 3> new_dims;
+  new_dims[0] = 11;
+  new_dims[1] = 3;
+  new_dims[2] = 5;
+  tensor.resize(new_dims);
+#endif
 
   tensor.setRandom();
   broadcast = tensor.broadcast(broadcasts);

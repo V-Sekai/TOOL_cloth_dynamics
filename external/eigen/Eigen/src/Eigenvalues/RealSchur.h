@@ -13,9 +13,6 @@
 
 #include "./HessenbergDecomposition.h"
 
-// IWYU pragma: private
-#include "./InternalHeaderCheck.h"
-
 namespace Eigen { 
 
 /** \eigenvalues_module \ingroup Eigenvalues_Module
@@ -25,7 +22,7 @@ namespace Eigen {
   *
   * \brief Performs a real Schur decomposition of a square matrix
   *
-  * \tparam MatrixType_ the type of the matrix of which we are computing the
+  * \tparam _MatrixType the type of the matrix of which we are computing the
   * real Schur decomposition; this is expected to be an instantiation of the
   * Matrix class template.
   *
@@ -54,10 +51,10 @@ namespace Eigen {
   *
   * \sa class ComplexSchur, class EigenSolver, class ComplexEigenSolver
   */
-template<typename MatrixType_> class RealSchur
+template<typename _MatrixType> class RealSchur
 {
   public:
-    typedef MatrixType_ MatrixType;
+    typedef _MatrixType MatrixType;
     enum {
       RowsAtCompileTime = MatrixType::RowsAtCompileTime,
       ColsAtCompileTime = MatrixType::ColsAtCompileTime,
@@ -315,7 +312,7 @@ RealSchur<MatrixType>& RealSchur<MatrixType>::computeFromHessenberg(const HessMa
   Scalar considerAsZero = numext::maxi<Scalar>( norm * numext::abs2(NumTraits<Scalar>::epsilon()),
                                                 (std::numeric_limits<Scalar>::min)() );
 
-  if(!numext::is_exactly_zero(norm))
+  if(norm!=Scalar(0))
   {
     while (iu >= 0)
     {
@@ -438,34 +435,33 @@ inline void RealSchur<MatrixType>::computeShift(Index iu, Index iter, Scalar& ex
   shiftInfo.coeffRef(1) = m_matT.coeff(iu-1,iu-1);
   shiftInfo.coeffRef(2) = m_matT.coeff(iu,iu-1) * m_matT.coeff(iu-1,iu);
 
-  // Wilkinson's original ad hoc shift
-  if (iter == 10)
-  {
-    exshift += shiftInfo.coeff(0);
-    for (Index i = 0; i <= iu; ++i)
-      m_matT.coeffRef(i,i) -= shiftInfo.coeff(0);
-    Scalar s = abs(m_matT.coeff(iu,iu-1)) + abs(m_matT.coeff(iu-1,iu-2));
-    shiftInfo.coeffRef(0) = Scalar(0.75) * s;
-    shiftInfo.coeffRef(1) = Scalar(0.75) * s;
-    shiftInfo.coeffRef(2) = Scalar(-0.4375) * s * s;
-  }
-
-  // MATLAB's new ad hoc shift
-  if (iter == 30)
-  {
-    Scalar s = (shiftInfo.coeff(1) - shiftInfo.coeff(0)) / Scalar(2.0);
-    s = s * s + shiftInfo.coeff(2);
-    if (s > Scalar(0))
-    {
-      s = sqrt(s);
-      if (shiftInfo.coeff(1) < shiftInfo.coeff(0))
-        s = -s;
-      s = s + (shiftInfo.coeff(1) - shiftInfo.coeff(0)) / Scalar(2.0);
-      s = shiftInfo.coeff(0) - shiftInfo.coeff(2) / s;
-      exshift += s;
+  // Alternate exceptional shifting strategy every 16 iterations.
+  if (iter % 16 == 0) {
+    // Wilkinson's original ad hoc shift
+    if (iter % 32 != 0) {
+      exshift += shiftInfo.coeff(0);
       for (Index i = 0; i <= iu; ++i)
-        m_matT.coeffRef(i,i) -= s;
-      shiftInfo.setConstant(Scalar(0.964));
+        m_matT.coeffRef(i,i) -= shiftInfo.coeff(0);
+      Scalar s = abs(m_matT.coeff(iu,iu-1)) + abs(m_matT.coeff(iu-1,iu-2));
+      shiftInfo.coeffRef(0) = Scalar(0.75) * s;
+      shiftInfo.coeffRef(1) = Scalar(0.75) * s;
+      shiftInfo.coeffRef(2) = Scalar(-0.4375) * s * s;
+    } else {
+      // MATLAB's new ad hoc shift
+      Scalar s = (shiftInfo.coeff(1) - shiftInfo.coeff(0)) / Scalar(2.0);
+      s = s * s + shiftInfo.coeff(2);
+      if (s > Scalar(0))
+      {
+        s = sqrt(s);
+        if (shiftInfo.coeff(1) < shiftInfo.coeff(0))
+          s = -s;
+        s = s + (shiftInfo.coeff(1) - shiftInfo.coeff(0)) / Scalar(2.0);
+        s = shiftInfo.coeff(0) - shiftInfo.coeff(2) / s;
+        exshift += s;
+        for (Index i = 0; i <= iu; ++i)
+          m_matT.coeffRef(i,i) -= s;
+        shiftInfo.setConstant(Scalar(0.964));
+      }
     }
   }
 }
@@ -518,7 +514,7 @@ inline void RealSchur<MatrixType>::performFrancisQRStep(Index il, Index im, Inde
     Matrix<Scalar, 2, 1> ess;
     v.makeHouseholder(ess, tau, beta);
     
-    if (!numext::is_exactly_zero(beta)) // if v is not zero
+    if (beta != Scalar(0)) // if v is not zero
     {
       if (firstIteration && k > il)
         m_matT.coeffRef(k,k-1) = -m_matT.coeff(k,k-1);
@@ -538,7 +534,7 @@ inline void RealSchur<MatrixType>::performFrancisQRStep(Index il, Index im, Inde
   Matrix<Scalar, 1, 1> ess;
   v.makeHouseholder(ess, tau, beta);
 
-  if (!numext::is_exactly_zero(beta)) // if v is not zero
+  if (beta != Scalar(0)) // if v is not zero
   {
     m_matT.coeffRef(iu-1, iu-2) = beta;
     m_matT.block(iu-1, iu-1, 2, size-iu+1).applyHouseholderOnTheLeft(ess, tau, workspace);

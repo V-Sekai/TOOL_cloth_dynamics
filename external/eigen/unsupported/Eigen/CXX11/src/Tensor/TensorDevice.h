@@ -10,24 +10,21 @@
 #ifndef EIGEN_CXX11_TENSOR_TENSOR_DEVICE_H
 #define EIGEN_CXX11_TENSOR_TENSOR_DEVICE_H
 
-// IWYU pragma: private
-#include "./InternalHeaderCheck.h"
-
 namespace Eigen {
 
-/** \class TensorDevice
-  * \ingroup CXX11_Tensor_Module
-  *
-  * \brief Pseudo expression providing an operator = that will evaluate its argument
-  * on the specified computing 'device' (GPU, thread pool, ...)
-  *
-  * Example:
-  *    C.device(EIGEN_GPU) = A + B;
-  *
-  * Todo: operator *= and /=.
-  */
-
-template <typename ExpressionType, typename DeviceType> class TensorDevice {
+/**
+ * \ingroup CXX11_Tensor_Module
+ *
+ * \brief Pseudo expression providing an operator = that will evaluate its argument
+ * on the specified computing 'device' (GPU, thread pool, ...)
+ *
+ * Example:
+ *    C.device(EIGEN_GPU) = A + B;
+ *
+ * Todo: operator *= and /=.
+ */
+template <typename ExpressionType, typename DeviceType>
+class TensorDevice {
   public:
     TensorDevice(const DeviceType& device, ExpressionType& expression) : m_device(device), m_expression(expression) {}
 

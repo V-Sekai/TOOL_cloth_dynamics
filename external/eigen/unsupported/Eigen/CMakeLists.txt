@@ -1,4 +1,4 @@
-set(Eigen_HEADERS 
+set(Eigen_HEADERS
   AdolcForward
   AlignedVector3
   ArpackSupport
@@ -6,13 +6,12 @@ set(Eigen_HEADERS
   BVH
   EulerAngles
   FFT
-  IterativeSolvers 
+  IterativeSolvers
   KroneckerProduct
   LevenbergMarquardt
   MatrixFunctions 
   MoreVectorization
   MPRealSupport
-  NNLS
   NonLinearOptimization
   NumericalDiff
   OpenGLSupport
