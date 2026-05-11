@@ -1127,6 +1127,13 @@ void Simulation::stepNN(int idx, const VecXd &x, const VecXd &v,
 	forwardRecords[forwardRecords.size() - 1].stepIdx = idx;
 }
 void Simulation::step() {
+	// [bench] Per-step wall clock, gated on env var BENCH_PER_STEP=1.
+	// Prints a one-liner at end of step() with total wall + which
+	// solver path was used. Designed for direct apples-to-apples
+	// comparison between USE_SLANG_CG=1 and the Eigen LLT default.
+	static const bool s_benchPerStep = (std::getenv("BENCH_PER_STEP") != nullptr);
+	auto _bench_t0 = std::chrono::steady_clock::now();
+
 	timeSteptimer = Timer();
 	timeSteptimer.enabled = true;
 	timeSteptimer.ticStart();
@@ -1343,12 +1350,19 @@ void Simulation::step() {
 				VecXd rhs = b_tilde + r;
 				std::vector<double> rhs_vec(rhs.data(), rhs.data() + rhs.size());
 				std::vector<double> x_vec;
+				// CG settings tuned for DiffCloth's PD outer loop:
+				// the outer iteration corrects under-converged inner
+				// solves over time, so we don't need very tight inner
+				// tolerance. tol = 1e-3 + max_iter = 15 gives a real
+				// solve (vs the original max_iter=5 = "always 5 iters")
+				// without burning iters past the point where the outer
+				// would absorb the residual.
 				int iters = sysMat[currentSysmatId].slangCG->solve(
-					rhs_vec, x_vec, /*tol=*/1e-3, /*max_iter=*/5);
+					rhs_vec, x_vec, /*tol=*/1e-3, /*max_iter=*/15);
 				const long long _us = std::chrono::duration_cast<std::chrono::microseconds>(
 					std::chrono::steady_clock::now() - _t0).count();
 				static int s_solveCount = 0;
-				if (s_solveCount < 5 || (s_solveCount % 200) == 0) {
+				if (s_solveCount < 3 || (s_solveCount % 500) == 0) {
 					std::printf("[slang-cg] solve #%d  rows=%lld  iters=%d  wall=%lld us\n",
 					            s_solveCount, (long long)rhs.size(), iters,
 					            (long long)_us);
@@ -1527,6 +1541,23 @@ void Simulation::step() {
 			std::printf("norms: x:%.4f v:%.4f f:%.4f r:%.4f\n", x_new.norm(),
 					v_new.norm(), f.norm(), r.norm());
 		}
+	}
+
+	// [bench] one-line per-step wall, gated on BENCH_PER_STEP=1.
+	if (s_benchPerStep) {
+		auto _bench_us = std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - _bench_t0).count();
+#ifdef __APPLE__
+		const char* path =
+			(g_useSlangCG && currentSysmatId < (int)sysMat.size()
+			 && sysMat[currentSysmatId].slangCG) ? "slang" : "eigen-llt";
+#else
+		const char* path = "eigen-llt";
+#endif
+		std::printf("[bench] step %d  solver=%s  dof=%zu  wall=%lld us\n",
+			static_cast<int>(forwardRecords.size()), path,
+			static_cast<size_t>(particles.size() * 3),
+			static_cast<long long>(_bench_us));
 	}
 }
 
