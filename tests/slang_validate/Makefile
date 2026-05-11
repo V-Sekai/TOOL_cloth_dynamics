@@ -22,6 +22,11 @@ SLANG_DIR  := $(REPO_ROOT)/bin/.slang
 EMITTED    := $(CURDIR)/build
 LEAN_DIR   := $(REPO_ROOT)/lean
 
+# Metal kernels we benchmark on real GPU (Tier-3 perf). The full slang →
+# air → metallib pipeline runs once per kernel listed here.
+METAL_KERNELS := spring_project saxpby spmv dot_reduce_serial assemble_b
+METALLIBS     := $(addprefix $(EMITTED)/,$(addsuffix .metallib,$(METAL_KERNELS)))
+
 CXX        ?= clang++
 # -Wno-unused-parameter silences clang's complaint about
 # `entryPointParams_0` in slangc -target cpp output (the parameter is
@@ -48,7 +53,8 @@ BINS       := $(addprefix $(EMITTED)/,$(addsuffix _test,$(TEST_NAMES))) \
               $(EMITTED)/pd_step_demo_test \
               $(EMITTED)/pd_multistep_demo_test \
               $(EMITTED)/pd_gravity_demo_test \
-              $(EMITTED)/perf_baseline_test
+              $(EMITTED)/perf_baseline_test \
+              $(EMITTED)/metal_perf_test
 
 .PHONY: test clean emit-shaders
 
@@ -130,6 +136,40 @@ $(EMITTED)/perf_baseline_test: perf_baseline_test.cpp \
                                $(EMITTED)/dot_reduce_serial_emit.cpp \
                                $(EMITTED)/assemble_b_emit.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
+
+# ---- Tier-3 Metal perf ------------------------------------------------
+# slang -> .metal source -> .air -> .metallib, then an Objective-C++
+# dispatcher loads each .metallib and times kernel invocations on the
+# real GPU. The pipeline mirrors curvenet's Layer 2 (slangc-metal) but
+# adds runtime dispatch + timing.
+#
+# Each rule below is target-specific:
+#   build/%.metal     comes from slangc -target metal on /tmp/emitted_shaders/%.slang
+#   build/%.air       comes from xcrun metal -c on build/%.metal
+#   build/%.metallib  comes from xcrun metallib on build/%.air
+#
+# direct_delta_mush hits an upstream slangc Metal-target codegen bug
+# ("Unknown addressspace encountered"), but none of the five kernels
+# we benchmark here use float4x4 + multi-buffer indexing, so we're
+# clear.
+
+$(EMITTED)/%.metal: emit-shaders
+	@mkdir -p $(EMITTED)
+	$(SLANGC) -target metal -stage compute -entry main \
+	  -o $@ /tmp/emitted_shaders/$*.slang
+
+$(EMITTED)/%.air: $(EMITTED)/%.metal
+	xcrun -sdk macosx metal -c $< -o $@
+
+$(EMITTED)/%.metallib: $(EMITTED)/%.air
+	xcrun -sdk macosx metallib $< -o $@
+
+# Metal dispatcher needs all five .metallib files alongside the .mm
+# source. -fobjc-arc enables Objective-C ARC for the imported headers.
+$(EMITTED)/metal_perf_test: metal_perf_test.mm $(METALLIBS)
+	$(CXX) -std=c++17 -O2 -fobjc-arc -Wall -Wextra \
+	  -framework Metal -framework Foundation \
+	  -o $@ $<
 
 clean:
 	rm -rf $(EMITTED)
