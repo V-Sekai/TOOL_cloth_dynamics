@@ -24,6 +24,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("triangle_project",   TriangleProject.shader)
   , ("saxpby",             Saxpby.shader)
   , ("spmv",               Spmv.shader)
+  , ("dot_reduce",         DotReduce.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
