@@ -34,7 +34,8 @@ TESTS      := spring_project:spring_project triangle_bending:triangle_bending \
               attachment_project:attachment_project \
               triangle_project:triangle_project \
               saxpby:saxpby \
-              spmv:spmv
+              spmv:spmv \
+              dot_reduce_serial:dot_reduce_serial
 
 TEST_NAMES := $(foreach t,$(TESTS),$(word 1,$(subst :, ,$(t))))
 KERNEL_FOR  = $(word 2,$(subst :, ,$(filter $(1):%,$(TESTS))))
