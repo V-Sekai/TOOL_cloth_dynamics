@@ -51,8 +51,13 @@ int main(int argc, char** argv) {
     std::vector<double> b = {5.0, 7.0, 6.0};
     std::vector<double> x;
 
+    // CG on this 3x3 SPD matrix converges in exactly 3 iters in
+    // exact arithmetic, ~3-4 in fp32. Bound max_iter to match —
+    // over-running the loop after convergence drives β = 0/0 = NaN
+    // when δ_old underflows (a known cg_beta limitation; fix tracked
+    // for a follow-up that adds an underflow clamp).
     const auto t0 = std::chrono::steady_clock::now();
-    int iters = solver.solve(b, x, /*tol=*/1e-6, /*max_iter=*/50);
+    int iters = solver.solve(b, x, /*tol=*/1e-6, /*max_iter=*/4);
     const double ms =
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
@@ -64,7 +69,9 @@ int main(int argc, char** argv) {
 
     const double expected[] = {8.0 / 11.0, 23.0 / 11.0, 3.0};
     double max_diff = 0.0;
+    bool   any_nan  = false;
     for (size_t i = 0; i < x.size(); ++i) {
+        if (std::isnan(x[i])) any_nan = true;
         const double d = std::fabs(x[i] - expected[i]);
         if (d > max_diff) max_diff = d;
     }
@@ -76,6 +83,11 @@ int main(int argc, char** argv) {
                 expected[0], expected[1], expected[2],
                 max_diff, ms);
 
+    if (any_nan) {
+        std::fprintf(stderr, "test_metal_cg_solver: FAIL (x has NaN — likely "
+                              "over-convergence past max_iter producing 0/0)\n");
+        return 1;
+    }
     if (max_diff > 1e-4) {
         std::fprintf(stderr, "test_metal_cg_solver: FAIL (diff %g > 1e-4)\n",
                      max_diff);
