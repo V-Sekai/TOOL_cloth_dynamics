@@ -46,7 +46,8 @@ SHADERS    := $(addprefix $(EMITTED)/,$(addsuffix _emit.cpp,$(KERNELS)))
 BINS       := $(addprefix $(EMITTED)/,$(addsuffix _test,$(TEST_NAMES))) \
               $(EMITTED)/cg_demo_test \
               $(EMITTED)/pd_step_demo_test \
-              $(EMITTED)/pd_multistep_demo_test
+              $(EMITTED)/pd_multistep_demo_test \
+              $(EMITTED)/pd_gravity_demo_test
 
 .PHONY: test clean emit-shaders
 
@@ -103,6 +104,17 @@ $(EMITTED)/pd_multistep_demo_test: pd_multistep_demo_test.cpp \
                                    $(EMITTED)/spmv_emit.cpp \
                                    $(EMITTED)/saxpby_emit.cpp \
                                    $(EMITTED)/dot_reduce_serial_emit.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
+
+# Hanging-mass demo. Same six kernels as pd_multistep_demo, with
+# gravity added to the predictor.
+$(EMITTED)/pd_gravity_demo_test: pd_gravity_demo_test.cpp \
+                                 $(EMITTED)/spring_project_emit.cpp \
+                                 $(EMITTED)/attachment_project_emit.cpp \
+                                 $(EMITTED)/assemble_b_emit.cpp \
+                                 $(EMITTED)/spmv_emit.cpp \
+                                 $(EMITTED)/saxpby_emit.cpp \
+                                 $(EMITTED)/dot_reduce_serial_emit.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
 
 clean:
