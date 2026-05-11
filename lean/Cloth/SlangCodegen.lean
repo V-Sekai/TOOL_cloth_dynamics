@@ -8,6 +8,7 @@ import Cloth.SlangCodegen.DotReduce
 import Cloth.SlangCodegen.DotReduceSerial
 import Cloth.SlangCodegen.AssembleB
 import Cloth.SlangCodegen.CGAlpha
+import Cloth.SlangCodegen.CGBeta
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella
