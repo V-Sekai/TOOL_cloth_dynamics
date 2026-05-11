@@ -41,7 +41,8 @@ KERNEL_FOR  = $(word 2,$(subst :, ,$(filter $(1):%,$(TESTS))))
 
 KERNELS    := $(sort $(foreach t,$(TESTS),$(word 2,$(subst :, ,$(t)))))
 SHADERS    := $(addprefix $(EMITTED)/,$(addsuffix _emit.cpp,$(KERNELS)))
-BINS       := $(addprefix $(EMITTED)/,$(addsuffix _test,$(TEST_NAMES)))
+BINS       := $(addprefix $(EMITTED)/,$(addsuffix _test,$(TEST_NAMES))) \
+              $(EMITTED)/cg_demo_test
 
 .PHONY: test clean emit-shaders
 
@@ -67,6 +68,13 @@ $(EMITTED)/%_emit.cpp: emit-shaders
 # TESTS list; the test source #include's its kernel's emit.
 .SECONDEXPANSION:
 $(EMITTED)/%_test: %_test.cpp $$(EMITTED)/$$(call KERNEL_FOR,%)_emit.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
+
+# Multi-kernel composition test. cg_demo dispatches both spmv and saxpby
+# from a single TU (see header comment in cg_demo_test.cpp for the
+# namespace + SLANG_PRELUDE_EXTERN_C-undef pattern that lets two
+# slangc-emitted kernels coexist).
+$(EMITTED)/cg_demo_test: cg_demo_test.cpp $(EMITTED)/spmv_emit.cpp $(EMITTED)/saxpby_emit.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
 
 clean:
