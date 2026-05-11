@@ -75,7 +75,9 @@ $(EMITTED)/%_test: %_test.cpp $$(EMITTED)/$$(call KERNEL_FOR,%)_emit.cpp
 # from a single TU (see header comment in cg_demo_test.cpp for the
 # namespace + SLANG_PRELUDE_EXTERN_C-undef pattern that lets two
 # slangc-emitted kernels coexist).
-$(EMITTED)/cg_demo_test: cg_demo_test.cpp $(EMITTED)/spmv_emit.cpp $(EMITTED)/saxpby_emit.cpp
+$(EMITTED)/cg_demo_test: cg_demo_test.cpp $(EMITTED)/spmv_emit.cpp \
+                         $(EMITTED)/saxpby_emit.cpp \
+                         $(EMITTED)/dot_reduce_serial_emit.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
 
 clean:
