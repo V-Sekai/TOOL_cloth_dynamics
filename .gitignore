@@ -36,3 +36,4 @@ bin/.slang/
 
 # slang_validate harness build dir (emit cpp + test binaries)
 tests/slang_validate/build/
+build_diffcloth/

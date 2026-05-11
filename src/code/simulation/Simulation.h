@@ -36,6 +36,10 @@
 #include "../engine/Timer.h"
 #include "../engine/UtilityFunctions.h"
 #include "AttachmentSpring.h"
+#include <memory>
+
+namespace cloth { class MetalCGSolver; }
+
 #include "Constraint.h"
 #include "FixedPoint.h"
 #include "Particle.h"
@@ -399,6 +403,12 @@ public:
 		std::vector<Spline> controlPointSplines;
 		Eigen::SimplicialLLT<SpMat> solver;
 
+		// Optional Slang/Metal CG solver, built alongside the LLT solver
+		// when USE_SLANG_CG is set in the environment. shared_ptr so the
+		// SystemMatrix copy-ctor can default-share without re-uploading
+		// CSR to the GPU.
+		std::shared_ptr<cloth::MetalCGSolver> slangCG;
+
 		SystemMatrix() {}
 
 		SystemMatrix(const SystemMatrix &other) {
@@ -413,6 +423,7 @@ public:
 			controlPointSplines = other.controlPointSplines;
 			fixedPoints = other.fixedPoints;
 			constraintNum = other.constraintNum;
+			slangCG = other.slangCG;       // share; not deep-copied
 
 			for (int i = 0; i < Constraint::CONSTRAINT_NUM; i++) {
 				A_t_times_A_pertype[i] = other.A_t_times_A_pertype[i];

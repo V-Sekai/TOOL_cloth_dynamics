@@ -100,11 +100,30 @@ include_directories(dependencies/lib)
 link_directories(${LIB})
 
 # OmegaEngine cpp
-file(GLOB HEADERS "src/code/*.h" "src/code/engine/*.h" "src/code/simulation/*.h" "src/code/supports/*.h" "src/code/optimization/*.h")
-file(GLOB SRCFILES "src/code/main.cpp" "src/code/*.h" "src/code/*.c" "src/code/engine/*.cpp" "src/code/engine/*.h" "src/code/simulation/*.cpp" "src/code/simulation/*.h" "src/code/supports/*.cpp" "src/code/supports/*.h" "src/code/optimization/*.cpp" "src/code/optimization/*.h")
+file(GLOB HEADERS "src/code/*.h" "src/code/engine/*.h" "src/code/simulation/*.h" "src/code/supports/*.h" "src/code/optimization/*.h" "src/code/slang_solver/*.h")
+file(GLOB SRCFILES "src/code/main.cpp" "src/code/*.h" "src/code/*.c" "src/code/engine/*.cpp" "src/code/engine/*.h" "src/code/simulation/*.cpp" "src/code/simulation/*.h" "src/code/supports/*.cpp" "src/code/supports/*.h" "src/code/optimization/*.cpp" "src/code/optimization/*.h" "src/code/slang_solver/*.h")
 source_group("Sources" FILES ${SRCFILES})
+
+# Slang/Metal CG solver wrapper. Only on Apple — the .mm needs
+# Objective-C++ + ARC + Metal/Foundation frameworks. Elsewhere the
+# call sites #ifdef out and DiffCloth's Eigen LLT remains the only
+# solver.
+if (APPLE)
+    set(SLANG_SOLVER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/MetalCGSolver.mm")
+    set_source_files_properties(${SLANG_SOLVER_SRC}
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    list(APPEND SRCFILES ${SLANG_SOLVER_SRC})
+endif()
+
 add_executable(${EXECUTABLE_NAME} ${SRCFILES}  )
 
 target_link_directories(${PROJECT_NAME} PRIVATE "/usr/local/Cellar/libomp/16.0.6/lib/")
 target_link_libraries(${EXECUTABLE_NAME} OpenMP::OpenMP_CXX)
 target_include_directories(${EXECUTABLE_NAME} PRIVATE ${EXTERNAL_HEADER})
+
+if (APPLE)
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    target_link_libraries(${EXECUTABLE_NAME}
+        ${METAL_FRAMEWORK} ${FOUNDATION_FRAMEWORK})
+endif()
