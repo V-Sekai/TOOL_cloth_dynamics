@@ -283,6 +283,19 @@ int MetalCGSolver::solve(const std::vector<double>& b,
         return -1;
     }
 
+    // [experiment] MOCK_SOLVE=1 short-circuits the entire Metal solve
+    // path. Returns x = 0 without touching any Metal buffer or
+    // dispatching any kernel. Used to test whether the 7-23x
+    // non-solve phase slowdown is caused by Metal's memory touches
+    // (unified-memory contention hypothesis) or something else.
+    // The simulation will be physically wrong but step 20's
+    // BENCH_PHASE_AT output gives the clean isolation.
+    static const bool s_mockSolve = (std::getenv("MOCK_SOLVE") != nullptr);
+    if (s_mockSolve) {
+        x.assign(N, 0.0);
+        return 0;
+    }
+
     // ---- Upload b, init x = 0, r = b, p = b -------------------------------
     {
         float* bptr = static_cast<float*>(impl_->bufB.contents);

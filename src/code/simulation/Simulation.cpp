@@ -1353,6 +1353,15 @@ void Simulation::step() {
 				static thread_local std::vector<double> rhs_vec;
 				static thread_local std::vector<double> x_vec;
 				rhs_vec.assign(rhs.data(), rhs.data() + rhs.size());
+
+				// [experiment] MOCK_SOLVE_OVERWRITE=1: do the full Metal
+				// solve (paying the dispatch + buffer-touch cost) but
+				// OVERWRITE v_new with the Eigen LLT solve result.
+				// Keeps the simulation correct so iteration count
+				// matches the Eigen baseline; isolates the Metal cost
+				// per solve.
+				static const bool s_mockOverwrite =
+					(std::getenv("MOCK_SOLVE_OVERWRITE") != nullptr);
 				// CG settings tuned for DiffCloth's PD outer loop:
 				// the outer iteration corrects under-converged inner
 				// solves over time, so we don't need very tight inner
@@ -1375,6 +1384,10 @@ void Simulation::step() {
 					std::fprintf(stderr,
 					             "[slang-cg] solve() returned %d; falling back to LLT\n",
 					             iters);
+					v_new = sysMat[currentSysmatId].solver.solve(b_tilde + r);
+				} else if (s_mockOverwrite) {
+					// Discard Metal result; use Eigen LLT for v_new so
+					// the iteration count matches the baseline.
 					v_new = sysMat[currentSysmatId].solver.solve(b_tilde + r);
 				} else {
 					v_new = Eigen::Map<VecXd>(x_vec.data(), x_vec.size());
