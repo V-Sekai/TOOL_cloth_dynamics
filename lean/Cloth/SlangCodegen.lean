@@ -5,6 +5,7 @@ import Cloth.SlangCodegen.TriangleProject
 import Cloth.SlangCodegen.Saxpby
 import Cloth.SlangCodegen.Spmv
 import Cloth.SlangCodegen.DotReduce
+import Cloth.SlangCodegen.DotReduceSerial
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella
