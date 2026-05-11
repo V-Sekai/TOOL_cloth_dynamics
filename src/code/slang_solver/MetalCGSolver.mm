@@ -1,30 +1,39 @@
-// MetalCGSolver implementation. Loads three .metallib files
-// (spmv, saxpby, dot_reduce — the parallel df32 reduce), creates
-// MTLComputePipelineState for each, and runs a CG loop on the GPU.
+// MetalCGSolver implementation. Loads six .metallib files
+// (spmv, saxpby_indirect, dot_reduce, cg_alpha, cg_beta, plus an
+// optional saxpby fallback), creates one MTLComputePipelineState
+// each, and runs a GPU-fused CG loop.
 //
-// CG layout (Shewchuk § B.2), all on-device buffers:
-//   r₀ = b − A·x₀          spmv into a temp, then saxpby
-//   p  = r₀
-//   δ_new = dot(r, r)       dot_reduce reads to a tiny shared buffer
-//   loop:
-//     q     = A·p           spmv
-//     pq    = dot(p, q)     dot_reduce
-//     α     = δ_new / pq    on the host (sync after dot_reduce)
-//     x    += α·p           saxpby
-//     r    -= α·q           saxpby
-//     δ_old = δ_new
-//     δ_new = dot(r, r)     dot_reduce
-//     if δ_new < tol²·δ₀ break
-//     β     = δ_new / δ_old
-//     p     = r + β·p       saxpby
+// Batching strategy: K CG iterations are encoded into ONE Metal
+// command buffer with NO CPU intervention between dispatches. α and
+// β are computed by the cg_alpha/cg_beta kernels writing to scalar
+// buffers that saxpby_indirect reads from on the next dispatch.
+// commit + waitUntilCompleted is paid once per K iters; convergence
+// is checked by reading dotOldBuf (which holds the most recent
+// delta_new after cg_beta's in-place copy) at the end of each batch.
+//
+// Per-iter encoded sequence (8 dispatches, all in one CB):
+//
+//   spmv               q = A·p
+//   dot_reduce         dotPQ = dot(p, q)
+//   cg_alpha           alphaArr = [+α, −α]
+//   saxpby_indirect    x = 1·x + α·p       (alpha=ones, beta=alphaArr[0])
+//   saxpby_indirect    r = 1·r + (−α)·q    (alpha=ones, beta=alphaArr[1])
+//   dot_reduce         dotNew = dot(r, r)
+//   cg_beta            betaBuf = β; dotOld := dotNew  (in place)
+//   saxpby_indirect    p = 1·r + β·p       (alpha=ones, beta=betaBuf)
+//
+// dotOld is initialised to dot_reduce(r₀,r₀) before the first batch
+// and is updated in-place by cg_beta every iter — no CPU ping-pong.
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
 #include "MetalCGSolver.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace cloth {
@@ -32,28 +41,38 @@ namespace cloth {
 struct MetalCGSolver::Impl {
     id<MTLDevice>               device   = nil;
     id<MTLCommandQueue>         queue    = nil;
-    id<MTLComputePipelineState> psoSpmv  = nil;
-    id<MTLComputePipelineState> psoSax   = nil;
-    id<MTLComputePipelineState> psoDot   = nil;
+    id<MTLComputePipelineState> psoSpmv      = nil;
+    id<MTLComputePipelineState> psoSaxIndir  = nil;   // saxpby_indirect
+    id<MTLComputePipelineState> psoDot       = nil;   // parallel dot_reduce (256 threads)
+    id<MTLComputePipelineState> psoCGAlpha   = nil;
+    id<MTLComputePipelineState> psoCGBeta    = nil;
 
     // CSR matrix (uploaded once).
     id<MTLBuffer> bufRowPtr = nil;
     id<MTLBuffer> bufColIdx = nil;
     id<MTLBuffer> bufVals   = nil;
     uint32_t      rows      = 0;
+    uint32_t      nnz       = 0;
 
     // CG workspace (allocated once, length = rows).
-    id<MTLBuffer> bufX      = nil;     // solution
-    id<MTLBuffer> bufR      = nil;     // residual
-    id<MTLBuffer> bufP      = nil;     // search direction
-    id<MTLBuffer> bufQ      = nil;     // A·p workspace
-    id<MTLBuffer> bufB      = nil;     // RHS (uploaded per solve)
-    id<MTLBuffer> bufDotDst = nil;     // dot_reduce (hi, lo) sink, length 2
+    id<MTLBuffer> bufX = nil;
+    id<MTLBuffer> bufR = nil;
+    id<MTLBuffer> bufP = nil;
+    id<MTLBuffer> bufQ = nil;
+    id<MTLBuffer> bufB = nil;
 
-    // Per-kernel parameter buffers (rebound per dispatch).
-    id<MTLBuffer> bufSpmvParams = nil;   // { uint rows; }
-    id<MTLBuffer> bufSaxParams  = nil;   // { uint n; float alpha; float beta; }
-    id<MTLBuffer> bufDotParams  = nil;   // { uint n; }
+    // Scalar workspace buffers.
+    id<MTLBuffer> bufDotPQ   = nil;   // 2 floats: dot(p, q) df32 hi/lo
+    id<MTLBuffer> bufDotNew  = nil;   // 2 floats: dot(r, r) df32 hi/lo
+    id<MTLBuffer> bufDotOld  = nil;   // 2 floats: previous iter's dot(r, r)
+    id<MTLBuffer> bufAlpha2  = nil;   // 2 floats: [+α, −α] from cg_alpha
+    id<MTLBuffer> bufBeta    = nil;   // 1 float : β from cg_beta
+    id<MTLBuffer> bufOnes    = nil;   // 1 float : 1.0 (saxpby_indirect's α'=1)
+
+    // Per-kernel parameter buffers.
+    id<MTLBuffer> bufSpmvParams      = nil;   // { uint rows; }
+    id<MTLBuffer> bufSaxIndirParams  = nil;   // { uint n; }
+    id<MTLBuffer> bufDotParams       = nil;   // { uint n; }
 
     bool ok = false;
 
@@ -88,12 +107,94 @@ struct MetalCGSolver::Impl {
         }
         return pso;
     }
+
+    // Encode one CG iteration into the given encoder. No commit; the
+    // caller batches K iters before commit + wait.
+    void encodeOneIter(id<MTLComputeCommandEncoder> enc) {
+        // 1. q = A · p
+        [enc setComputePipelineState:psoSpmv];
+        [enc setBuffer:bufSpmvParams offset:0 atIndex:0];
+        [enc setBuffer:bufRowPtr     offset:0 atIndex:1];
+        [enc setBuffer:bufColIdx     offset:0 atIndex:2];
+        [enc setBuffer:bufVals       offset:0 atIndex:3];
+        [enc setBuffer:bufP          offset:0 atIndex:4];
+        [enc setBuffer:bufQ          offset:0 atIndex:5];
+        [enc dispatchThreads:MTLSizeMake(rows, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+
+        // 2. dotPQ = dot(p, q)   (parallel df32 reduce)
+        [enc setComputePipelineState:psoDot];
+        [enc setBuffer:bufDotParams offset:0 atIndex:0];
+        [enc setBuffer:bufP         offset:0 atIndex:1];
+        [enc setBuffer:bufQ         offset:0 atIndex:2];
+        [enc setBuffer:bufDotPQ     offset:0 atIndex:3];
+        [enc dispatchThreads:MTLSizeMake(256, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+
+        // 3. cg_alpha: alphaArr = [+α, −α]
+        [enc setComputePipelineState:psoCGAlpha];
+        [enc setBuffer:bufDotPQ  offset:0 atIndex:0];
+        [enc setBuffer:bufDotNew offset:0 atIndex:1];
+        [enc setBuffer:bufAlpha2 offset:0 atIndex:2];
+        [enc dispatchThreads:MTLSizeMake(1, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+
+        // 4. x = 1·x + α·p       (saxpby_indirect, beta = alphaArr[0] = +α)
+        [enc setComputePipelineState:psoSaxIndir];
+        [enc setBuffer:bufSaxIndirParams offset:0       atIndex:0];
+        [enc setBuffer:bufOnes           offset:0       atIndex:1];   // alpha
+        [enc setBuffer:bufAlpha2         offset:0       atIndex:2];   // beta = +α at byte 0
+        [enc setBuffer:bufX              offset:0       atIndex:3];
+        [enc setBuffer:bufP              offset:0       atIndex:4];
+        [enc setBuffer:bufX              offset:0       atIndex:5];   // dst = x (in-place)
+        [enc dispatchThreads:MTLSizeMake(rows, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+
+        // 5. r = 1·r + (−α)·q    (saxpby_indirect, beta = alphaArr[1] = −α at offset 4)
+        [enc setComputePipelineState:psoSaxIndir];
+        [enc setBuffer:bufSaxIndirParams offset:0                    atIndex:0];
+        [enc setBuffer:bufOnes           offset:0                    atIndex:1];
+        [enc setBuffer:bufAlpha2         offset:sizeof(float)        atIndex:2];   // beta = −α
+        [enc setBuffer:bufR              offset:0                    atIndex:3];
+        [enc setBuffer:bufQ              offset:0                    atIndex:4];
+        [enc setBuffer:bufR              offset:0                    atIndex:5];   // dst = r (in-place)
+        [enc dispatchThreads:MTLSizeMake(rows, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+
+        // 6. dotNew = dot(r, r)
+        [enc setComputePipelineState:psoDot];
+        [enc setBuffer:bufDotParams offset:0 atIndex:0];
+        [enc setBuffer:bufR         offset:0 atIndex:1];
+        [enc setBuffer:bufR         offset:0 atIndex:2];
+        [enc setBuffer:bufDotNew    offset:0 atIndex:3];
+        [enc dispatchThreads:MTLSizeMake(256, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+
+        // 7. cg_beta: betaBuf = β; dotOld := dotNew  (in place)
+        [enc setComputePipelineState:psoCGBeta];
+        [enc setBuffer:bufDotNew offset:0 atIndex:0];
+        [enc setBuffer:bufDotOld offset:0 atIndex:1];
+        [enc setBuffer:bufBeta   offset:0 atIndex:2];
+        [enc dispatchThreads:MTLSizeMake(1, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+
+        // 8. p = 1·r + β·p       (saxpby_indirect, beta = betaBuf)
+        [enc setComputePipelineState:psoSaxIndir];
+        [enc setBuffer:bufSaxIndirParams offset:0 atIndex:0];
+        [enc setBuffer:bufOnes           offset:0 atIndex:1];
+        [enc setBuffer:bufBeta           offset:0 atIndex:2];
+        [enc setBuffer:bufR              offset:0 atIndex:3];
+        [enc setBuffer:bufP              offset:0 atIndex:4];
+        [enc setBuffer:bufP              offset:0 atIndex:5];
+        [enc dispatchThreads:MTLSizeMake(rows, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    }
 };
 
 namespace {
-struct SpmvParams { uint32_t rows; };
-struct SaxParams  { uint32_t n; float alpha; float beta; };
-struct DotParams  { uint32_t n; };
+struct SpmvParams         { uint32_t rows; };
+struct SaxIndirParams     { uint32_t n; };
+struct DotParams          { uint32_t n; };
 }
 
 MetalCGSolver::MetalCGSolver(const CSRSpMatF& A, const char* metallibPath)
@@ -107,22 +208,27 @@ MetalCGSolver::MetalCGSolver(const CSRSpMatF& A, const char* metallibPath)
 
     std::string root = metallibPath;
     if (!root.empty() && root.back() != '/') root.push_back('/');
-    id<MTLLibrary> libSpmv = Impl::loadLib(impl_->device, root + "spmv.metallib",       "spmv");
-    id<MTLLibrary> libSax  = Impl::loadLib(impl_->device, root + "saxpby.metallib",     "saxpby");
-    id<MTLLibrary> libDot  = Impl::loadLib(impl_->device, root + "dot_reduce.metallib", "dot_reduce");
-    if (!libSpmv || !libSax || !libDot) return;
+    id<MTLLibrary> libSpmv  = Impl::loadLib(impl_->device, root + "spmv.metallib",            "spmv");
+    id<MTLLibrary> libSaxI  = Impl::loadLib(impl_->device, root + "saxpby_indirect.metallib", "saxpby_indirect");
+    id<MTLLibrary> libDot   = Impl::loadLib(impl_->device, root + "dot_reduce.metallib",      "dot_reduce");
+    id<MTLLibrary> libAlpha = Impl::loadLib(impl_->device, root + "cg_alpha.metallib",        "cg_alpha");
+    id<MTLLibrary> libBeta  = Impl::loadLib(impl_->device, root + "cg_beta.metallib",         "cg_beta");
+    if (!libSpmv || !libSaxI || !libDot || !libAlpha || !libBeta) return;
 
-    impl_->psoSpmv = Impl::makePSO(impl_->device, libSpmv, "main_0", "spmv");
-    impl_->psoSax  = Impl::makePSO(impl_->device, libSax,  "main_0", "saxpby");
-    impl_->psoDot  = Impl::makePSO(impl_->device, libDot,  "main_0", "dot_reduce");
-    if (!impl_->psoSpmv || !impl_->psoSax || !impl_->psoDot) return;
+    impl_->psoSpmv      = Impl::makePSO(impl_->device, libSpmv,  "main_0", "spmv");
+    impl_->psoSaxIndir  = Impl::makePSO(impl_->device, libSaxI,  "main_0", "saxpby_indirect");
+    impl_->psoDot       = Impl::makePSO(impl_->device, libDot,   "main_0", "dot_reduce");
+    impl_->psoCGAlpha   = Impl::makePSO(impl_->device, libAlpha, "main_0", "cg_alpha");
+    impl_->psoCGBeta    = Impl::makePSO(impl_->device, libBeta,  "main_0", "cg_beta");
+    if (!impl_->psoSpmv || !impl_->psoSaxIndir || !impl_->psoDot ||
+        !impl_->psoCGAlpha || !impl_->psoCGBeta) return;
 
     impl_->rows = A.rows;
+    impl_->nnz  = uint32_t(A.colIdx.size());
     const uint32_t N    = A.rows;
-    const uint32_t nnz  = uint32_t(A.colIdx.size());
     const NSUInteger bytesRow = (N + 1) * sizeof(int32_t);
-    const NSUInteger bytesNnz = nnz * sizeof(int32_t);
-    const NSUInteger bytesVal = nnz * sizeof(float);
+    const NSUInteger bytesNnz = impl_->nnz * sizeof(int32_t);
+    const NSUInteger bytesVal = impl_->nnz * sizeof(float);
     const NSUInteger bytesVec = N * sizeof(float);
 
     impl_->bufRowPtr = [impl_->device newBufferWithBytes:A.rowPtr.data()
@@ -140,17 +246,24 @@ MetalCGSolver::MetalCGSolver(const CSRSpMatF& A, const char* metallibPath)
     impl_->bufP = [impl_->device newBufferWithLength:bytesVec options:MTLResourceStorageModeShared];
     impl_->bufQ = [impl_->device newBufferWithLength:bytesVec options:MTLResourceStorageModeShared];
     impl_->bufB = [impl_->device newBufferWithLength:bytesVec options:MTLResourceStorageModeShared];
-    impl_->bufDotDst = [impl_->device newBufferWithLength:2 * sizeof(float)
-                                                  options:MTLResourceStorageModeShared];
+
+    impl_->bufDotPQ  = [impl_->device newBufferWithLength:2 * sizeof(float) options:MTLResourceStorageModeShared];
+    impl_->bufDotNew = [impl_->device newBufferWithLength:2 * sizeof(float) options:MTLResourceStorageModeShared];
+    impl_->bufDotOld = [impl_->device newBufferWithLength:2 * sizeof(float) options:MTLResourceStorageModeShared];
+    impl_->bufAlpha2 = [impl_->device newBufferWithLength:2 * sizeof(float) options:MTLResourceStorageModeShared];
+    impl_->bufBeta   = [impl_->device newBufferWithLength:1 * sizeof(float) options:MTLResourceStorageModeShared];
+    impl_->bufOnes   = [impl_->device newBufferWithLength:1 * sizeof(float) options:MTLResourceStorageModeShared];
+    *static_cast<float*>(impl_->bufOnes.contents) = 1.0f;
 
     impl_->bufSpmvParams = [impl_->device newBufferWithLength:sizeof(SpmvParams)
                                                       options:MTLResourceStorageModeShared];
-    impl_->bufSaxParams  = [impl_->device newBufferWithLength:sizeof(SaxParams)
-                                                      options:MTLResourceStorageModeShared];
-    impl_->bufDotParams  = [impl_->device newBufferWithLength:sizeof(DotParams)
-                                                      options:MTLResourceStorageModeShared];
-    *static_cast<SpmvParams*>(impl_->bufSpmvParams.contents) = {N};
-    *static_cast<DotParams*>(impl_->bufDotParams.contents)   = {N};
+    impl_->bufSaxIndirParams = [impl_->device newBufferWithLength:sizeof(SaxIndirParams)
+                                                          options:MTLResourceStorageModeShared];
+    impl_->bufDotParams = [impl_->device newBufferWithLength:sizeof(DotParams)
+                                                     options:MTLResourceStorageModeShared];
+    *static_cast<SpmvParams*>(impl_->bufSpmvParams.contents)         = {N};
+    *static_cast<SaxIndirParams*>(impl_->bufSaxIndirParams.contents) = {N};
+    *static_cast<DotParams*>(impl_->bufDotParams.contents)           = {N};
 
     impl_->ok = true;
 }
@@ -170,123 +283,71 @@ int MetalCGSolver::solve(const std::vector<double>& b,
         return -1;
     }
 
-    // ---- Upload b (fp64 → fp32) -------------------------------------------
+    // ---- Upload b, init x = 0, r = b, p = b -------------------------------
     {
         float* bptr = static_cast<float*>(impl_->bufB.contents);
-        for (uint32_t i = 0; i < N; ++i) bptr[i] = float(b[i]);
-    }
-    // Initial guess x₀ = 0; r₀ = b − A·0 = b; p₀ = r₀.
-    {
         float* xptr = static_cast<float*>(impl_->bufX.contents);
         float* rptr = static_cast<float*>(impl_->bufR.contents);
         float* pptr = static_cast<float*>(impl_->bufP.contents);
-        float* bptr = static_cast<float*>(impl_->bufB.contents);
         for (uint32_t i = 0; i < N; ++i) {
+            const float v = float(b[i]);
+            bptr[i] = v;
             xptr[i] = 0.0f;
-            rptr[i] = bptr[i];
-            pptr[i] = bptr[i];
+            rptr[i] = v;
+            pptr[i] = v;
         }
     }
 
-    auto encDispatch = [&](id<MTLComputeCommandEncoder> enc,
-                           id<MTLComputePipelineState> pso,
-                           NSArray* buffers,
-                           MTLSize grid, MTLSize tg) {
-        [enc setComputePipelineState:pso];
-        for (NSUInteger i = 0; i < buffers.count; ++i) {
-            [enc setBuffer:buffers[i] offset:0 atIndex:i];
-        }
-        [enc dispatchThreads:grid threadsPerThreadgroup:tg];
-    };
-
-    auto dispatchDot = [&](id<MTLBuffer> a, id<MTLBuffer> bb) -> double {
+    // ---- Initial dot_new = dot(r, r); copy to dotOld for first iter -------
+    double delta_0 = 0.0;
+    {
         id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-        encDispatch(enc, impl_->psoDot,
-                    @[impl_->bufDotParams, a, bb, impl_->bufDotDst],
-                    MTLSizeMake(256, 1, 1), MTLSizeMake(256, 1, 1));
+        [enc setComputePipelineState:impl_->psoDot];
+        [enc setBuffer:impl_->bufDotParams offset:0 atIndex:0];
+        [enc setBuffer:impl_->bufR         offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufR         offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufDotNew    offset:0 atIndex:3];
+        [enc dispatchThreads:MTLSizeMake(256, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
         [enc endEncoding];
         [cb commit];
         [cb waitUntilCompleted];
-        const float* dst = static_cast<const float*>(impl_->bufDotDst.contents);
-        return double(dst[0]) + double(dst[1]);
-    };
 
-    double delta_new = dispatchDot(impl_->bufR, impl_->bufR);
-    const double delta_0 = delta_new;
-    if (delta_0 == 0.0) {
-        // b ≡ 0 → x ≡ 0 already satisfies A·x = b.
-        x.assign(N, 0.0);
-        return 0;
+        const float* dn = static_cast<const float*>(impl_->bufDotNew.contents);
+        float* dold = static_cast<float*>(impl_->bufDotOld.contents);
+        dold[0] = dn[0]; dold[1] = dn[1];
+
+        delta_0 = double(dn[0]) + double(dn[1]);
+        if (delta_0 == 0.0) {
+            x.assign(N, 0.0);
+            return 0;
+        }
     }
 
+    // ---- Batched CG loop: K iters per command buffer ----------------------
+    const int K = 30;
+    const double convTol2 = tol * tol * delta_0;
     int iter = 0;
-    SaxParams* spy = static_cast<SaxParams*>(impl_->bufSaxParams.contents);
-    spy->n = N;
 
-    for (; iter < max_iter; ++iter) {
-        // q = A · p
-        {
-            id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
-            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-            encDispatch(enc, impl_->psoSpmv,
-                        @[impl_->bufSpmvParams, impl_->bufRowPtr,
-                          impl_->bufColIdx, impl_->bufVals,
-                          impl_->bufP, impl_->bufQ],
-                        MTLSizeMake(N, 1, 1), MTLSizeMake(256, 1, 1));
-            [enc endEncoding];
-            [cb commit];
-            [cb waitUntilCompleted];
-        }
+    while (iter < max_iter) {
+        const int thisBatch = std::min(K, max_iter - iter);
 
-        const double pq    = dispatchDot(impl_->bufP, impl_->bufQ);
-        const double alpha = delta_new / pq;
+        id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+        for (int j = 0; j < thisBatch; ++j) impl_->encodeOneIter(enc);
+        [enc endEncoding];
+        [cb commit];
+        [cb waitUntilCompleted];
+        iter += thisBatch;
 
-        // x := x + α·p    (saxpby with α'=1, β'=α, src x, src p, dst x)
-        spy->alpha = 1.0f; spy->beta = float(alpha);
-        {
-            id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
-            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-            encDispatch(enc, impl_->psoSax,
-                        @[impl_->bufSaxParams, impl_->bufX, impl_->bufP, impl_->bufX],
-                        MTLSizeMake(N, 1, 1), MTLSizeMake(256, 1, 1));
-            [enc endEncoding];
-            [cb commit];
-            [cb waitUntilCompleted];
-        }
-        // r := r − α·q
-        spy->alpha = 1.0f; spy->beta = float(-alpha);
-        {
-            id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
-            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-            encDispatch(enc, impl_->psoSax,
-                        @[impl_->bufSaxParams, impl_->bufR, impl_->bufQ, impl_->bufR],
-                        MTLSizeMake(N, 1, 1), MTLSizeMake(256, 1, 1));
-            [enc endEncoding];
-            [cb commit];
-            [cb waitUntilCompleted];
-        }
-
-        const double delta_old = delta_new;
-        delta_new = dispatchDot(impl_->bufR, impl_->bufR);
-        if (delta_new < tol * tol * delta_0) { ++iter; break; }
-        const double beta = delta_new / delta_old;
-
-        // p := r + β·p   (saxpby with α'=1, β'=β, src r, src p, dst p)
-        spy->alpha = 1.0f; spy->beta = float(beta);
-        {
-            id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
-            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-            encDispatch(enc, impl_->psoSax,
-                        @[impl_->bufSaxParams, impl_->bufR, impl_->bufP, impl_->bufP],
-                        MTLSizeMake(N, 1, 1), MTLSizeMake(256, 1, 1));
-            [enc endEncoding];
-            [cb commit];
-            [cb waitUntilCompleted];
-        }
+        // After the batch, dotOld holds the most recent delta_new
+        // (cg_beta's in-place copy on the last iter of the batch).
+        const float* dold = static_cast<const float*>(impl_->bufDotOld.contents);
+        const double delta_new = double(dold[0]) + double(dold[1]);
+        if (delta_new < convTol2) break;
     }
 
-    // Read back x (fp32 → fp64).
     x.resize(N);
     const float* xptr = static_cast<const float*>(impl_->bufX.contents);
     for (uint32_t i = 0; i < N; ++i) x[i] = double(xptr[i]);
