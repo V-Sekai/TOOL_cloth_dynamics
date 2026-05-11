@@ -29,6 +29,47 @@
 
 #include "Simulation.h"
 
+#ifdef __APPLE__
+#include "../slang_solver/MetalCGSolver.h"
+#endif
+
+namespace {
+    // Runtime selector. Set USE_SLANG_CG=1 in the environment to route
+    // the LLT back-solve in step() through the Metal CG dispatcher.
+    bool g_useSlangCG = (std::getenv("USE_SLANG_CG") != nullptr);
+
+    // metallib search path. Override with SLANG_METALLIB_DIR=... in env.
+    std::string slangMetallibDir() {
+        if (const char* env = std::getenv("SLANG_METALLIB_DIR")) return env;
+        return "/Users/ernest.lee/Desktop/TOOL_cloth_dynamics/"
+               "tests/slang_validate/build";
+    }
+
+#ifdef __APPLE__
+    // Build a CSR (fp32, int32) snapshot of an Eigen sparse SPD matrix.
+    cloth::CSRSpMatF eigenToCSRf(const SpMat& P) {
+        cloth::CSRSpMatF csr;
+        csr.rows = uint32_t(P.rows());
+        // Force a column-major-to-CSR conversion: for SPD matrices
+        // column-major == row-major in CSR layout, but be explicit.
+        Eigen::SparseMatrix<double, Eigen::RowMajor> R = P;
+        R.makeCompressed();
+        const Eigen::Index nnz = R.nonZeros();
+        csr.rowPtr.resize(csr.rows + 1);
+        csr.colIdx.resize(size_t(nnz));
+        csr.values.resize(size_t(nnz));
+        for (Eigen::Index i = 0; i <= Eigen::Index(csr.rows); ++i) {
+            csr.rowPtr[size_t(i)] = int32_t(R.outerIndexPtr()[i]);
+        }
+        for (Eigen::Index k = 0; k < nnz; ++k) {
+            csr.colIdx[size_t(k)] = int32_t(R.innerIndexPtr()[k]);
+            csr.values[size_t(k)] = float(R.valuePtr()[k]);
+        }
+        return csr;
+    }
+#endif
+}
+
 // #define DEBUG_EXPLOSION
 // #define  DEBUG_SELFCOLLISION
 volatile bool Simulation::gravityEnabled = true;
@@ -1292,7 +1333,41 @@ void Simulation::step() {
 				r_prim.setZero();
 			}
 			timeSteptimer.tic("solve and update");
+#ifdef __APPLE__
+			if (g_useSlangCG && sysMat[currentSysmatId].slangCG) {
+				// Slang/Metal CG path. Bench-mode: keep max_iter and tol
+				// modest so we can measure per-step wall on a real demo
+				// without spending minutes per CG solve at high
+				// dispatch-overhead-per-iter cost.
+				auto _t0 = std::chrono::steady_clock::now();
+				VecXd rhs = b_tilde + r;
+				std::vector<double> rhs_vec(rhs.data(), rhs.data() + rhs.size());
+				std::vector<double> x_vec;
+				int iters = sysMat[currentSysmatId].slangCG->solve(
+					rhs_vec, x_vec, /*tol=*/1e-3, /*max_iter=*/5);
+				const long long _us = std::chrono::duration_cast<std::chrono::microseconds>(
+					std::chrono::steady_clock::now() - _t0).count();
+				static int s_solveCount = 0;
+				if (s_solveCount < 5 || (s_solveCount % 200) == 0) {
+					std::printf("[slang-cg] solve #%d  rows=%lld  iters=%d  wall=%lld us\n",
+					            s_solveCount, (long long)rhs.size(), iters,
+					            (long long)_us);
+				}
+				++s_solveCount;
+				if (iters < 0) {
+					std::fprintf(stderr,
+					             "[slang-cg] solve() returned %d; falling back to LLT\n",
+					             iters);
+					v_new = sysMat[currentSysmatId].solver.solve(b_tilde + r);
+				} else {
+					v_new = Eigen::Map<VecXd>(x_vec.data(), x_vec.size());
+				}
+			} else {
+				v_new = sysMat[currentSysmatId].solver.solve(b_tilde + r);
+			}
+#else
 			v_new = sysMat[currentSysmatId].solver.solve(b_tilde + r);
+#endif
 			x_new = v_new * sceneConfig.timeStep + x_n;
 
 			timeSteptimer.toc();
@@ -2992,6 +3067,25 @@ void Simulation::initializePrefactoredMatrices() {
 		sysMat[sysMatId].P =
 				factorizeDirectSolverLLT(sysMat[sysMatId].P, sysMat[sysMatId].solver,
 						"Msolver pre factorization");
+
+#ifdef __APPLE__
+		if (g_useSlangCG) {
+			auto csr = eigenToCSRf(sysMat[sysMatId].P);
+			auto solver = std::make_shared<cloth::MetalCGSolver>(
+				csr, slangMetallibDir().c_str());
+			if (solver->ok()) {
+				sysMat[sysMatId].slangCG = solver;
+				std::printf("[slang-cg] built MetalCGSolver for sysMat[%d] "
+				            "(rows=%u, nnz=%zu)\n",
+				            sysMatId, csr.rows, csr.colIdx.size());
+			} else {
+				std::fprintf(stderr,
+				             "[slang-cg] FAILED to build MetalCGSolver for "
+				             "sysMat[%d] (rows=%u); falling back to Eigen LLT\n",
+				             sysMatId, csr.rows);
+			}
+		}
+#endif
 
 		if (runBackward) {
 			MatXd dp_dfixedpos = MatXd(sysMat[sysMatId].constraintNum,
