@@ -1362,15 +1362,24 @@ void Simulation::step() {
 				// per solve.
 				static const bool s_mockOverwrite =
 					(std::getenv("MOCK_SOLVE_OVERWRITE") != nullptr);
-				// CG settings tuned for DiffCloth's PD outer loop:
-				// the outer iteration corrects under-converged inner
-				// solves over time, so we don't need very tight inner
-				// tolerance. tol = 1e-3 + max_iter = 15 gives a real
-				// solve (vs the original max_iter=5 = "always 5 iters")
-				// without burning iters past the point where the outer
-				// would absorb the residual.
+				// CG settings: tol=1e-4 max_iter=60 was found to be the
+				// sweet spot by the 3x3 sweep documented in PR #38.
+				// At that setting, dress per-step drops from 3.76s
+				// (baseline tol=1e-3 max_iter=15) to 1.84s — 51% faster
+				// because PD outer iter count drops 4.3x when inner
+				// solves are accurate to ~1e-4 (~ fp32 precision floor).
+				// Tighter tol caps because CG can't push below fp32's
+				// noise floor of ~1e-4 relative.
+				// Configurable at runtime for further sweeps without
+				// rebuilding.
+				static const float s_tol =
+					(std::getenv("SLANG_CG_TOL") != nullptr)
+					 ? float(std::atof(std::getenv("SLANG_CG_TOL"))) : 1e-4f;
+				static const int s_maxIter =
+					(std::getenv("SLANG_CG_MAX_ITER") != nullptr)
+					 ? std::atoi(std::getenv("SLANG_CG_MAX_ITER")) : 60;
 				int iters = sysMat[currentSysmatId].slangCG->solve(
-					rhs_vec, x_vec, /*tol=*/1e-3, /*max_iter=*/15);
+					rhs_vec, x_vec, /*tol=*/s_tol, /*max_iter=*/s_maxIter);
 				const long long _us = std::chrono::duration_cast<std::chrono::microseconds>(
 					std::chrono::steady_clock::now() - _t0).count();
 				static int s_solveCount = 0;
