@@ -1,0 +1,90 @@
+name: lean-slang
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    # macos-14 (Apple Silicon) is what curvenet's matching pipeline uses
+    # and what slangc has the cleanest prebuilt assets for. macos-13 Intel
+    # runners are also fine but slower.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache .elan + lake-packages
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.elan
+            lean/.lake/packages
+            lean/.lake/build
+          key: elan-lake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}
+
+      - name: Install elan / Lean
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Slang toolchain
+        uses: actions/cache@v5
+        with:
+          path: bin/.slang
+          # OS + arch is essential here — slangc is a native binary, so a
+          # cache populated by a Linux runner is unusable on macOS aarch64
+          # and vice versa.
+          key: slang-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('misc/install-slang.sh') }}
+
+      - name: Fetch slangc
+        run: |
+          if [ ! -x bin/.slang/bin/slangc ]; then
+            misc/install-slang.sh
+          fi
+          bin/slangc -v
+
+      - name: Layer 0 — lake build (native_decide pins emitted Slang text)
+        working-directory: lean
+        run: lake build
+
+      - name: Emit every Slang kernel
+        working-directory: lean
+        run: |
+          mkdir -p /tmp/emitted_shaders
+          lake exe emit_shaders /tmp/emitted_shaders
+
+      - name: Layer 1 — slangc -target spirv round-trip on every kernel
+        run: |
+          ok=0; total=0; failed=
+          for f in /tmp/emitted_shaders/*.slang; do
+            total=$((total+1))
+            spv="${f%.slang}.spv"
+            if bin/slangc -target spirv -profile sm_6_5 -stage compute \
+                 -entry main -o "$spv" "$f" 2>/tmp/slangc_err.log; then
+              magic=$(xxd -l 4 -p "$spv")
+              size=$(stat -f%z "$spv")
+              if [ "$magic" = "03022307" ] && [ "$size" -gt 100 ]; then
+                ok=$((ok+1))
+              else
+                failed="$failed $(basename "$f"):bad-spirv"
+              fi
+            else
+              failed="$failed $(basename "$f"):slangc-fail"
+              cat /tmp/slangc_err.log | head -5
+            fi
+          done
+          echo "$ok / $total kernels round-trip to SPIR-V"
+          if [ -n "$failed" ]; then
+            echo "FAILED:$failed"
+            exit 1
+          fi
+
+      - name: Layer 2 — slangc -target cpp + clang + run on known inputs
+        run: make -C tests/slang_validate test

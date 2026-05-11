@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Wrapper that invokes the project-local slangc with all args passed through.
+# The actual binary + dylibs live under bin/.slang/ (gitignored, ~200MB).
+# Refetch with `misc/install-slang.sh` if missing.
+set -euo pipefail
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$SELF_DIR/.slang/bin/slangc" "$@"
