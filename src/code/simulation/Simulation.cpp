@@ -1559,6 +1559,22 @@ void Simulation::step() {
 			static_cast<size_t>(particles.size() * 3),
 			static_cast<long long>(_bench_us));
 	}
+
+	// [bench] one-shot phase breakdown on a chosen step number (default 20).
+	// Set BENCH_PHASE_AT=<step_number> to pick which step to dump. Useful
+	// for diagnosing what dominates the per-step wall — solver, collision
+	// detection, projection, or constraint reassembly. Each phase comes
+	// from DiffCloth's internal `timeSteptimer.tic/toc` labels.
+	static const char* s_phaseAtStr = std::getenv("BENCH_PHASE_AT");
+	if (s_phaseAtStr) {
+		static const int s_phaseAt = std::atoi(s_phaseAtStr);
+		if (static_cast<int>(forwardRecords.size()) == s_phaseAt) {
+			timeSteptimer.ticEnd();
+			std::printf("\n[phase-breakdown step %d]\n", s_phaseAt);
+			timeSteptimer.report();
+			std::printf("\n");
+		}
+	}
 }
 
 VecXd Simulation::solveDirect(VecXd &dL_dxnew, double t_2, SpMat &dproj_dxnew_t,
