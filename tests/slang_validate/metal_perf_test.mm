@@ -5,6 +5,17 @@
 // commandBuffer.waitUntilCompleted, and compares against the
 // slangc-cpp numbers from #22.
 //
+// **Batched dispatch.** This harness batches all `reps` invocations
+// into ONE command buffer with ONE commit + ONE waitUntilCompleted,
+// so the ~100-200µs Metal submission round-trip is amortised across
+// `reps` invocations. The per-invoke numbers below approach
+// steady-state GPU compute throughput rather than dispatch latency
+// (#23 measured the one-commit-per-invoke regime).
+//
+// **Warm-up.** A single un-timed dispatch is paid up-front so
+// pipeline-state compile, page-in, and command-queue init don't
+// pollute the steady-state measurement.
+//
 // Pipeline (per kernel):
 //
 //   .slang  -- slangc -target metal -->  build/<k>.metal
@@ -101,29 +112,16 @@ static id<MTLBuffer> makeEmptyBuf(id<MTLDevice> dev, size_t bytes) {
     return [dev newBufferWithLength:bytes options:MTLResourceStorageModeShared];
 }
 
-// Dispatch one compute pass and wait. Returns wall time (s) for that
-// single dispatch+wait.
-static double dispatchOnce(id<MTLCommandQueue> queue,
-                           id<MTLComputePipelineState> pipe,
-                           NSArray<id<MTLBuffer>>* buffers,
-                           NSArray<NSNumber*>* offsets,
-                           MTLSize gridSize,
-                           MTLSize tgSize) {
-    id<MTLCommandBuffer> cb = [queue commandBuffer];
-    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:pipe];
-    for (NSUInteger i = 0; i < buffers.count; ++i) {
-        [enc setBuffer:buffers[i] offset:offsets[i].unsignedIntegerValue atIndex:i];
-    }
-    [enc dispatchThreads:gridSize threadsPerThreadgroup:tgSize];
-    [enc endEncoding];
-    const double t0 = seconds();
-    [cb commit];
-    [cb waitUntilCompleted];
-    return seconds() - t0;
-}
-
-// Run dispatch reps times; return total wall time in ms.
+// Batched dispatch: all `reps` invocations encoded into ONE command
+// buffer with ONE commit + ONE waitUntilCompleted. This amortises the
+// ~100–200 µs Metal command-submission round-trip across `reps`,
+// approaching steady-state GPU throughput.
+//
+// Same encoder + same buffers across all reps: between dispatches the
+// encoder serialises them on the resources, so each invocation
+// actually runs (the GPU doesn't elide them as redundant). The first
+// dispatch in the batch also pays a one-time pipeline-state-cache
+// warm-up that we don't separate out.
 static double timeReps(id<MTLCommandQueue> queue,
                        id<MTLComputePipelineState> pipe,
                        NSArray<id<MTLBuffer>>* buffers,
@@ -131,9 +129,62 @@ static double timeReps(id<MTLCommandQueue> queue,
                        MTLSize gridSize,
                        MTLSize tgSize,
                        int reps) {
+    // Warm-up dispatch: pays one-time costs (PSO compile, page-in,
+    // command-queue init) outside the timing window.
+    {
+        id<MTLCommandBuffer> warm = [queue commandBuffer];
+        id<MTLComputeCommandEncoder> wenc = [warm computeCommandEncoder];
+        [wenc setComputePipelineState:pipe];
+        for (NSUInteger i = 0; i < buffers.count; ++i) {
+            [wenc setBuffer:buffers[i] offset:offsets[i].unsignedIntegerValue atIndex:i];
+        }
+        [wenc dispatchThreads:gridSize threadsPerThreadgroup:tgSize];
+        [wenc endEncoding];
+        [warm commit];
+        [warm waitUntilCompleted];
+    }
+
+    id<MTLCommandBuffer> cb = [queue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:pipe];
+    for (NSUInteger i = 0; i < buffers.count; ++i) {
+        [enc setBuffer:buffers[i] offset:offsets[i].unsignedIntegerValue atIndex:i];
+    }
+    const double t0 = seconds();
+    for (int i = 0; i < reps; ++i) {
+        [enc dispatchThreads:gridSize threadsPerThreadgroup:tgSize];
+    }
+    [enc endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+    const double total = seconds() - t0;
+    (void)reps;
+    return total * 1000.0;
+}
+
+// Per-invocation timing kept for reference but no longer used in the
+// main benches. (One commit per invoke is what #23 measured.)
+static double timeRepsUnbatched(id<MTLCommandQueue> queue,
+                                id<MTLComputePipelineState> pipe,
+                                NSArray<id<MTLBuffer>>* buffers,
+                                NSArray<NSNumber*>* offsets,
+                                MTLSize gridSize,
+                                MTLSize tgSize,
+                                int reps) {
     double total = 0.0;
     for (int i = 0; i < reps; ++i) {
-        total += dispatchOnce(queue, pipe, buffers, offsets, gridSize, tgSize);
+        id<MTLCommandBuffer> cb = [queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+        [enc setComputePipelineState:pipe];
+        for (NSUInteger j = 0; j < buffers.count; ++j) {
+            [enc setBuffer:buffers[j] offset:offsets[j].unsignedIntegerValue atIndex:j];
+        }
+        [enc dispatchThreads:gridSize threadsPerThreadgroup:tgSize];
+        [enc endEncoding];
+        const double t0 = seconds();
+        [cb commit];
+        [cb waitUntilCompleted];
+        total += seconds() - t0;
     }
     return total * 1000.0;
 }
@@ -320,19 +371,18 @@ int main(int argc, const char** argv) {
                                   "no GPU available, skipping.\n");
             return 0;     // Don't fail the build on headless CI runners.
         }
-        std::printf("\nmetal_perf (real GPU dispatch — one command buffer per invocation)\n");
+        std::printf("\nmetal_perf (real GPU dispatch — batched, all reps per command buffer)\n");
         std::printf("=================================================================\n");
         std::printf("device: %s\n", dev.name.UTF8String);
         std::printf("threadgroup memory: %lu B\n", (unsigned long)dev.maxThreadgroupMemoryLength);
         std::printf("\n");
-        std::printf("Caveat: ms/invoke below = (1 commit + 1 waitUntilCompleted) per\n");
-        std::printf("dispatch. At N=30k each kernel does ~30µs of GPU compute, but\n");
-        std::printf("Metal dispatch overhead is ~100-200µs per command buffer on M-series\n");
-        std::printf("→ numbers reflect dispatch latency, not steady-state GPU throughput.\n");
-        std::printf("Batched dispatch + MTLCounterSampleBuffer would close that gap;\n");
-        std::printf("treat these as 'one-shot dispatch cost', a real number that the PD\n");
-        std::printf("step loop will pay every PD iteration if it dispatches one kernel\n");
-        std::printf("at a time without batching.\n");
+        std::printf("All reps are encoded into ONE command buffer with ONE commit/wait,\n");
+        std::printf("so the ~100–200µs Metal submission overhead is paid once and the\n");
+        std::printf("per-invoke numbers approach steady-state GPU throughput (Metal's\n");
+        std::printf("compute encoder serialises same-resource dispatches between\n");
+        std::printf("invocations, so each one actually runs and is not elided).\n");
+        std::printf("A one-shot warm-up dispatch (not timed) is paid first to keep PSO\n");
+        std::printf("compile + page-in out of the measurement.\n");
         std::printf("-----------------------------------------------------------------\n");
         std::printf("%-22s %-12s %-12s %-14s %s\n",
                     "kernel", "N", "reps", "ms/invoke", "throughput");
