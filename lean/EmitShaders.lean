@@ -18,8 +18,9 @@ open Cloth.SlangCodegen
 open LeanSlang
 
 private def kernels : List (String × SlangShaderModule) :=
-  [ ("spring_project",   SpringProject.shader)
-  , ("triangle_bending", TriangleBending.shader)
+  [ ("spring_project",     SpringProject.shader)
+  , ("triangle_bending",   TriangleBending.shader)
+  , ("attachment_project", AttachmentProject.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do

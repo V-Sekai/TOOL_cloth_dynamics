@@ -30,7 +30,8 @@ CXXFLAGS   ?= -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter
 INCLUDES   := -I$(SLANG_DIR)/include -I$(EMITTED)
 
 # Per-test-to-kernel mapping. test_name → kernel_name.
-TESTS      := spring_project:spring_project triangle_bending:triangle_bending
+TESTS      := spring_project:spring_project triangle_bending:triangle_bending \
+              attachment_project:attachment_project
 
 TEST_NAMES := $(foreach t,$(TESTS),$(word 1,$(subst :, ,$(t))))
 KERNEL_FOR  = $(word 2,$(subst :, ,$(filter $(1):%,$(TESTS))))
