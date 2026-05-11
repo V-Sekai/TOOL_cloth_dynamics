@@ -22,21 +22,6 @@ static constexpr double kBudgetSeconds = 5.0;
 int main() {
     const auto t0 = std::chrono::steady_clock::now();
 
-    float dotNew[2] = { 50.0f, 0.0f};
-    float dotOld[2] = {110.0f, 0.0f};
-    float betaOut[1] = {0.0f};
-
-    GlobalParams_0 gp{};
-    gp.dotNew_0.data  = dotNew;   gp.dotNew_0.count  = 2;
-    gp.dotOld_0.data  = dotOld;   gp.dotOld_0.count  = 2;
-    gp.betaOut_0.data = betaOut;  gp.betaOut_0.count = 1;
-
-    ComputeVaryingInput vi{};
-    vi.startGroupID = uint3(0, 0, 0);
-    vi.endGroupID   = uint3(1, 1, 1);
-    main_0(&vi, nullptr, &gp);
-
-    const float expected_b = 50.0f / 110.0f;
     int   fails        = 0;
     float max_abs_diff = 0.0f;
 
@@ -51,9 +36,55 @@ int main() {
         }
     };
 
-    check("betaOut[0]", betaOut[0], expected_b);
-    check("dotOld[0]",  dotOld[0],  50.0f);
-    check("dotOld[1]",  dotOld[1],   0.0f);
+    // -------- Normal case: nonzero dold ----------------------------------
+    {
+        float dotNew[2] = { 50.0f, 0.0f};
+        float dotOld[2] = {110.0f, 0.0f};
+        float betaOut[1] = {0.0f};
+
+        GlobalParams_0 gp{};
+        gp.dotNew_0.data  = dotNew;   gp.dotNew_0.count  = 2;
+        gp.dotOld_0.data  = dotOld;   gp.dotOld_0.count  = 2;
+        gp.betaOut_0.data = betaOut;  gp.betaOut_0.count = 1;
+
+        ComputeVaryingInput vi{};
+        vi.startGroupID = uint3(0, 0, 0);
+        vi.endGroupID   = uint3(1, 1, 1);
+        main_0(&vi, nullptr, &gp);
+
+        const float expected_b = 50.0f / 110.0f;
+        check("normal.betaOut[0]", betaOut[0], expected_b);
+        check("normal.dotOld[0]",  dotOld[0],  50.0f);
+        check("normal.dotOld[1]",  dotOld[1],   0.0f);
+    }
+
+    // -------- Underflow case: dold == 0 (CG over-convergence) ------------
+    // Without the ternary clamp this would give NaN from 0/0. With it,
+    // β should be 0 — making the downstream saxpby `p = r + 0·p = r`,
+    // which is a soft CG restart.
+    {
+        float dotNew[2] = {1e-12f, 0.0f};
+        float dotOld[2] = {0.0f,   0.0f};
+        float betaOut[1] = {0.0f};
+
+        GlobalParams_0 gp{};
+        gp.dotNew_0.data  = dotNew;   gp.dotNew_0.count  = 2;
+        gp.dotOld_0.data  = dotOld;   gp.dotOld_0.count  = 2;
+        gp.betaOut_0.data = betaOut;  gp.betaOut_0.count = 1;
+
+        ComputeVaryingInput vi{};
+        vi.startGroupID = uint3(0, 0, 0);
+        vi.endGroupID   = uint3(1, 1, 1);
+        main_0(&vi, nullptr, &gp);
+
+        if (std::isnan(betaOut[0])) {
+            std::fprintf(stderr, "cg_beta underflow: betaOut[0] is NaN (clamp not effective)\n");
+            ++fails;
+        }
+        check("underflow.betaOut[0]", betaOut[0], 0.0f);
+        check("underflow.dotOld[0]",  dotOld[0],  1e-12f);
+        check("underflow.dotOld[1]",  dotOld[1],  0.0f);
+    }
 
     const auto t1 = std::chrono::steady_clock::now();
     const double elapsed = std::chrono::duration<double>(t1 - t0).count();
@@ -63,10 +94,9 @@ int main() {
         return 2;
     }
     if (fails == 0) {
-        std::printf("cg_beta: 3/3 OK (β=%.6f, dotOld now=[%.1f, %.1f], "
+        std::printf("cg_beta: 6/6 OK (normal + underflow clamp, "
                     "max_abs_diff=%g, %.1fms)\n",
-                    betaOut[0], dotOld[0], dotOld[1], max_abs_diff,
-                    elapsed * 1000.0);
+                    max_abs_diff, elapsed * 1000.0);
         return 0;
     }
     std::fprintf(stderr, "cg_beta: %d FAIL\n", fails);
