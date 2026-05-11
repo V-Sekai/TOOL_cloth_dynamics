@@ -29,6 +29,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("assemble_b",         AssembleB.shader)
   , ("cg_alpha",           CGAlpha.shader)
   , ("cg_beta",            CGBeta.shader)
+  , ("saxpby_indirect",    SaxpbyIndirect.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
