@@ -50,7 +50,13 @@ def shader : SlangShaderModule :=
         , .declInit floatTy "dold"
             (.bin "+" (.index (.var "dotOld") (.litUint 0))
                       (.index (.var "dotOld") (.litUint 1)))
-        , .declInit floatTy "b" (.bin "/" (.var "dnew") (.var "dold"))
+        -- Underflow clamp: when dold is below ε, β = 0 so the next
+        -- saxpby `p = r + β·p` reduces to `p = r` (a soft restart).
+        -- Avoids 0/0 = NaN when CG over-converges past max_iter.
+        , .declInit floatTy "b"
+            (.ternary (.bin ">" (.var "dold") (.litFloat 1e-20))
+              (.bin "/" (.var "dnew") (.var "dold"))
+              (.litFloat 0.0))
         , .assign (.index (.var "betaOut") (.litUint 0)) (.var "b")
         , .assign (.index (.var "dotOld") (.litUint 0))
             (.index (.var "dotNew") (.litUint 0))
@@ -70,7 +76,7 @@ RWStructuredBuffer<float> betaOut;
 void main(uint3 tid : SV_DispatchThreadID) {
   float dnew = (dotNew[0u] + dotNew[1u]);
   float dold = (dotOld[0u] + dotOld[1u]);
-  float b = (dnew / dold);
+  float b = ((dold > 0.000000) ? (dnew / dold) : 0.000000);
   betaOut[0u] = b;
   dotOld[0u] = dotNew[0u];
   dotOld[1u] = dotNew[1u];
