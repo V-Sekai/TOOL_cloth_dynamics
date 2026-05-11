@@ -26,6 +26,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("spmv",               Spmv.shader)
   , ("dot_reduce",         DotReduce.shader)
   , ("dot_reduce_serial",  DotReduceSerial.shader)
+  , ("assemble_b",         AssembleB.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
