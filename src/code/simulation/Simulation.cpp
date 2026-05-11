@@ -1342,14 +1342,17 @@ void Simulation::step() {
 			timeSteptimer.tic("solve and update");
 #ifdef __APPLE__
 			if (g_useSlangCG && sysMat[currentSysmatId].slangCG) {
-				// Slang/Metal CG path. Bench-mode: keep max_iter and tol
-				// modest so we can measure per-step wall on a real demo
-				// without spending minutes per CG solve at high
-				// dispatch-overhead-per-iter cost.
+				// Slang/Metal CG path. PR #35 found that fresh-allocating
+				// rhs_vec / x_vec per solve thrashes the heap and slows
+				// down every CPU-only phase by 7-23x (cache eviction).
+				// Reuse thread-local buffers: vector::assign() retains
+				// capacity once grown to N, so subsequent calls are
+				// allocation-free.
 				auto _t0 = std::chrono::steady_clock::now();
 				VecXd rhs = b_tilde + r;
-				std::vector<double> rhs_vec(rhs.data(), rhs.data() + rhs.size());
-				std::vector<double> x_vec;
+				static thread_local std::vector<double> rhs_vec;
+				static thread_local std::vector<double> x_vec;
+				rhs_vec.assign(rhs.data(), rhs.data() + rhs.size());
 				// CG settings tuned for DiffCloth's PD outer loop:
 				// the outer iteration corrects under-converged inner
 				// solves over time, so we don't need very tight inner
