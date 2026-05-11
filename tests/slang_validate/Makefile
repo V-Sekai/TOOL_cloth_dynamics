@@ -47,7 +47,8 @@ BINS       := $(addprefix $(EMITTED)/,$(addsuffix _test,$(TEST_NAMES))) \
               $(EMITTED)/cg_demo_test \
               $(EMITTED)/pd_step_demo_test \
               $(EMITTED)/pd_multistep_demo_test \
-              $(EMITTED)/pd_gravity_demo_test
+              $(EMITTED)/pd_gravity_demo_test \
+              $(EMITTED)/perf_baseline_test
 
 .PHONY: test clean emit-shaders
 
@@ -115,6 +116,19 @@ $(EMITTED)/pd_gravity_demo_test: pd_gravity_demo_test.cpp \
                                  $(EMITTED)/spmv_emit.cpp \
                                  $(EMITTED)/saxpby_emit.cpp \
                                  $(EMITTED)/dot_reduce_serial_emit.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
+
+# Perf baseline. Times each of the five hottest kernels on a
+# realistic-N input through slangc-cpp's sequential simulator. Read
+# the harness's header comment for what this measures (regression
+# floor, relative cost ranking, scaling sanity) vs what it does NOT
+# measure (GPU perf — Tier 3 work).
+$(EMITTED)/perf_baseline_test: perf_baseline_test.cpp \
+                               $(EMITTED)/spring_project_emit.cpp \
+                               $(EMITTED)/saxpby_emit.cpp \
+                               $(EMITTED)/spmv_emit.cpp \
+                               $(EMITTED)/dot_reduce_serial_emit.cpp \
+                               $(EMITTED)/assemble_b_emit.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
 
 clean:
