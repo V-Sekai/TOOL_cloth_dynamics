@@ -44,7 +44,8 @@ KERNEL_FOR  = $(word 2,$(subst :, ,$(filter $(1):%,$(TESTS))))
 KERNELS    := $(sort $(foreach t,$(TESTS),$(word 2,$(subst :, ,$(t)))))
 SHADERS    := $(addprefix $(EMITTED)/,$(addsuffix _emit.cpp,$(KERNELS)))
 BINS       := $(addprefix $(EMITTED)/,$(addsuffix _test,$(TEST_NAMES))) \
-              $(EMITTED)/cg_demo_test
+              $(EMITTED)/cg_demo_test \
+              $(EMITTED)/pd_step_demo_test
 
 .PHONY: test clean emit-shaders
 
@@ -79,6 +80,17 @@ $(EMITTED)/%_test: %_test.cpp $$(EMITTED)/$$(call KERNEL_FOR,%)_emit.cpp
 $(EMITTED)/cg_demo_test: cg_demo_test.cpp $(EMITTED)/spmv_emit.cpp \
                          $(EMITTED)/saxpby_emit.cpp \
                          $(EMITTED)/dot_reduce_serial_emit.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
+
+# End-to-end PD step composition. Co-includes six slangc-emit.cpp
+# files in one TU via the namespace + EXTERN_C-undef trick.
+$(EMITTED)/pd_step_demo_test: pd_step_demo_test.cpp \
+                              $(EMITTED)/spring_project_emit.cpp \
+                              $(EMITTED)/attachment_project_emit.cpp \
+                              $(EMITTED)/assemble_b_emit.cpp \
+                              $(EMITTED)/spmv_emit.cpp \
+                              $(EMITTED)/saxpby_emit.cpp \
+                              $(EMITTED)/dot_reduce_serial_emit.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
 
 clean:
