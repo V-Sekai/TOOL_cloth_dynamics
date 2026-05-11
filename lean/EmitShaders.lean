@@ -31,6 +31,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("cg_beta",            CGBeta.shader)
   , ("saxpby_indirect",    SaxpbyIndirect.shader)
   , ("spmv_df32",          SpmvDf32.shader)
+  , ("saxpby_indirect_df32", SaxpbyIndirectDf32.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
