@@ -282,6 +282,37 @@ static double benchDotReduceSerial(id<MTLDevice> dev, id<MTLCommandQueue> queue,
                     reps);
 }
 
+// Parallel dot_reduce: one threadgroup of 256 threads doing a
+// grid-strided df32 fold + groupshared tree reduce. Compiles fine
+// through slangc-metal (Metal natively supports threadgroup memory +
+// threadgroup_barrier); only slangc-cpp can't run it, which is why
+// the serial variant exists.
+static double benchDotReduceParallel(id<MTLDevice> dev, id<MTLCommandQueue> queue,
+                                     id<MTLLibrary> lib, uint32_t N, int reps) {
+    id<MTLComputePipelineState> pipe = makePipe(dev, lib, "main_0");
+    if (!pipe) return -1;
+
+    DotParams p{N};
+    std::vector<float> a(N), b(N);
+    for (uint32_t i = 0; i < N; ++i) {
+        a[i] = float((i % 17) - 8);
+        b[i] = float((i % 23) - 11);
+    }
+    std::vector<float> dst(2, 0.0f);
+
+    id<MTLBuffer> bp  = makeBuf(dev, p);
+    id<MTLBuffer> ba  = makeBuf(dev, a);
+    id<MTLBuffer> bb  = makeBuf(dev, b);
+    id<MTLBuffer> bd  = makeBuf(dev, dst);
+
+    return timeReps(queue, pipe,
+                    @[bp, ba, bb, bd],
+                    @[@0, @0, @0, @0],
+                    MTLSizeMake(256, 1, 1),    // one threadgroup of 256
+                    MTLSizeMake(256, 1, 1),
+                    reps);
+}
+
 static double benchAssembleB(id<MTLDevice> dev, id<MTLCommandQueue> queue,
                              id<MTLLibrary> lib, uint32_t V,
                              uint32_t incPerV, int reps, uint32_t& slots_out) {
@@ -435,8 +466,19 @@ int main(int argc, const char** argv) {
             if (lib) {
                 const double ms  = benchDotReduceSerial(dev, queue, lib, N, REPS_DOT);
                 const double per = ms / REPS_DOT;
-                std::printf("%-22s %-12u %-12d %-14.4f %.1f M elems/s  [single-thread, 1 SIMT lane]\n",
+                std::printf("%-22s %-12u %-12d %-14.4f %.1f M elems/s  [serial, 1 SIMT lane]\n",
                             "dot_reduce_serial", N, REPS_DOT, per,
+                            (double(N) / per) / 1e3);
+            }
+        }
+
+        {
+            id<MTLLibrary> lib = loadLib(dev, (libRoot + "dot_reduce.metallib").c_str());
+            if (lib) {
+                const double ms  = benchDotReduceParallel(dev, queue, lib, N, REPS_FAST);
+                const double per = ms / REPS_FAST;
+                std::printf("%-22s %-12u %-12d %-14.4f %.1f M elems/s  [parallel, 256 threads, df32]\n",
+                            "dot_reduce", N, REPS_FAST, per,
                             (double(N) / per) / 1e3);
             }
         }
