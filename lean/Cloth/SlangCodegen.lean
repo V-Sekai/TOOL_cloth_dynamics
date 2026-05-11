@@ -3,6 +3,7 @@ import Cloth.SlangCodegen.TriangleBending
 import Cloth.SlangCodegen.AttachmentProject
 import Cloth.SlangCodegen.TriangleProject
 import Cloth.SlangCodegen.Saxpby
+import Cloth.SlangCodegen.Spmv
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella
