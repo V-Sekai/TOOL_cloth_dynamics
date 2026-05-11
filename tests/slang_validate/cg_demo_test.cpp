@@ -1,8 +1,11 @@
-// Composition test for spmv + saxpby — runs a textbook Conjugate Gradient
-// solve to convergence on a 3x3 SPD system, dispatching only those two
-// slangc-emitted kernels per iteration (dot products are computed on the
-// host because slangc-cpp target can't link the dot_reduce kernel — see
-// Cloth.SlangCodegen.DotReduce docstring).
+// Composition test for spmv + saxpby + dot_reduce_serial — runs a
+// textbook Conjugate Gradient solve to convergence on a 3x3 SPD system,
+// dispatching all three slangc-emitted kernels per iteration.
+//
+// dot_reduce_serial is the cpp-target-compatible companion to
+// dot_reduce (which uses GroupMemoryBarrierWithGroupSync — rejected by
+// slangc-cpp); both produce identical df32 results via the same
+// Knuth/Dekker EFTs.
 //
 // System:
 //
@@ -19,26 +22,27 @@
 //
 //   r₀ = b − A·x₀    (= b when x₀ = 0)
 //   p₀ = r₀
-//   δ_new = dot(r₀, r₀)
+//   δ_new = dot(r₀, r₀)           ← dot_reduce_serial kernel
 //   loop:
-//     q     = A·p              ← spmv kernel
-//     α     = δ_new / dot(p,q)
-//     x    := 1·x + α·p        ← saxpby kernel (in-place on x)
-//     r    := 1·r + (−α)·q     ← saxpby kernel (in-place on r)
+//     q     = A·p                  ← spmv kernel
+//     pq    = dot(p, q)            ← dot_reduce_serial kernel
+//     α     = δ_new / pq
+//     x    := 1·x + α·p            ← saxpby kernel (in-place on x)
+//     r    := 1·r + (−α)·q         ← saxpby kernel (in-place on r)
 //     δ_old = δ_new
-//     δ_new = dot(r, r)
+//     δ_new = dot(r, r)            ← dot_reduce_serial kernel
 //     if δ_new < tol²·δ₀ break
 //     β     = δ_new / δ_old
-//     p    := 1·r + β·p        ← saxpby kernel (in-place on p)
+//     p    := 1·r + β·p            ← saxpby kernel (in-place on p)
 //
 // CG on a 3×3 SPD matrix converges in ≤ 3 iterations in exact
 // arithmetic; with fp32 storage we accept 1e-5 absolute tolerance and
 // allow up to 20 iterations for safety.
 //
-// **How two kernels co-exist in one TU.** slangc-cpp emits each kernel
-// as a translation unit with `main_0` and `GlobalParams_0` at file
-// scope. `main_0` is wrapped in SLANG_PRELUDE_EXPORT (= `extern "C"`),
-// so naive namespace wrapping leaks the symbol to global scope.
+// **How three kernels co-exist in one TU.** slangc-cpp emits each
+// kernel as a translation unit with `main_0` and `GlobalParams_0` at
+// file scope. `main_0` is wrapped in SLANG_PRELUDE_EXPORT (= `extern
+// "C"`), so naive namespace wrapping leaks the symbol to global scope.
 //
 // We work around this by `#undef`-ing the macro inside each namespace
 // before `#include`-ing the emit.cpp, so the kernel functions become
@@ -86,16 +90,23 @@ namespace cg_saxpby {
     #pragma pop_macro("SLANG_PRELUDE_EXTERN_C_END")
 }
 
-static constexpr double kBudgetSeconds = 5.0;
-
-static double hostDot(const float* a, const float* b, uint32_t n) {
-    // Plain fp64 accumulation. For n = 3 there's no precision concern;
-    // for larger problems the matching GPU dispatch would use the
-    // dot_reduce kernel (df32) instead.
-    double s = 0.0;
-    for (uint32_t i = 0; i < n; ++i) s += double(a[i]) * double(b[i]);
-    return s;
+namespace cg_dot {
+    #pragma push_macro("SLANG_PRELUDE_EXTERN_C")
+    #pragma push_macro("SLANG_PRELUDE_EXTERN_C_START")
+    #pragma push_macro("SLANG_PRELUDE_EXTERN_C_END")
+    #undef  SLANG_PRELUDE_EXTERN_C
+    #undef  SLANG_PRELUDE_EXTERN_C_START
+    #undef  SLANG_PRELUDE_EXTERN_C_END
+    #define SLANG_PRELUDE_EXTERN_C
+    #define SLANG_PRELUDE_EXTERN_C_START
+    #define SLANG_PRELUDE_EXTERN_C_END
+    #include "dot_reduce_serial_emit.cpp"
+    #pragma pop_macro("SLANG_PRELUDE_EXTERN_C")
+    #pragma pop_macro("SLANG_PRELUDE_EXTERN_C_START")
+    #pragma pop_macro("SLANG_PRELUDE_EXTERN_C_END")
 }
+
+static constexpr double kBudgetSeconds = 5.0;
 
 int main() {
     const auto t0 = std::chrono::steady_clock::now();
@@ -117,7 +128,25 @@ int main() {
     float p[N] = {b[0], b[1], b[2]};
     float q[N] = {0.0f, 0.0f, 0.0f};   // A·p workspace
 
-    double delta_new = hostDot(r, r, N);
+    // Persistent dot-product param + dst (hi/lo) for dot_reduce_serial.
+    cg_dot::DotReduceSerialParams_0 dp{N};
+    float dot_dst[2] = {0.0f, 0.0f};
+    cg_dot::GlobalParams_0 gp_dot{};
+    gp_dot.params_0 = &dp;
+    gp_dot.dst_0.data = dot_dst; gp_dot.dst_0.count = 2;
+
+    // Helper: dispatch dot_reduce_serial(a, b) and return hi + lo in fp64.
+    auto kernelDot = [&](float* aa, float* bb) -> double {
+        gp_dot.a_0.data = aa; gp_dot.a_0.count = N;
+        gp_dot.b_0.data = bb; gp_dot.b_0.count = N;
+        ComputeVaryingInput vid{};
+        vid.startGroupID = uint3(0, 0, 0);
+        vid.endGroupID   = uint3(1, 1, 1);
+        cg_dot::main_0(&vid, nullptr, &gp_dot);
+        return double(dot_dst[0]) + double(dot_dst[1]);
+    };
+
+    double delta_new = kernelDot(r, r);
     const double delta_0 = delta_new;
 
     // Persistent parameter buffers (one per kernel).
@@ -145,7 +174,7 @@ int main() {
         gp_spmv.y_0.data = q; gp_spmv.y_0.count = N;
         cg_spmv::main_0(&vi, nullptr, &gp_spmv);
 
-        const double pq    = hostDot(p, q, N);
+        const double pq    = kernelDot(p, q);
         const double alpha = delta_new / pq;
 
         // x := 1·x + α·p     (saxpby with src x aliased to dst)
@@ -163,7 +192,7 @@ int main() {
         cg_saxpby::main_0(&vi, nullptr, &gp_sax);
 
         const double delta_old = delta_new;
-        delta_new = hostDot(r, r, N);
+        delta_new = kernelDot(r, r);
         if (delta_new < TOL * TOL * delta_0) { ++iter; break; }
 
         const double beta = delta_new / delta_old;
