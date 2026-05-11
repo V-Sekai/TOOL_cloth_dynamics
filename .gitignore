@@ -25,3 +25,14 @@ godot.exe
 .godot/
 
 .DS_Store
+
+# Lean (Lake) build artifacts
+lean/.lake/
+lean/lake-packages/
+lean/build/
+
+# Slang toolchain — fetched by misc/install-slang.sh (~200MB)
+bin/.slang/
+
+# slang_validate harness build dir (emit cpp + test binaries)
+tests/slang_validate/build/
