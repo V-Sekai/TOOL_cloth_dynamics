@@ -1,6 +1,7 @@
 import Cloth.SlangCodegen.SpringProject
 import Cloth.SlangCodegen.TriangleBending
 import Cloth.SlangCodegen.AttachmentProject
+import Cloth.SlangCodegen.TriangleProject
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella
