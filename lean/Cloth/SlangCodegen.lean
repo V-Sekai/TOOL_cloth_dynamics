@@ -20,6 +20,7 @@ import Cloth.SlangCodegen.VbdInit
 import Cloth.SlangCodegen.VbdSolveApply
 import Cloth.SlangCodegen.VbdGatherSpring
 import Cloth.SlangCodegen.VbdGatherAttachment
+import Cloth.SlangCodegen.VbdGatherTriangle
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella

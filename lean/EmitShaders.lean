@@ -40,6 +40,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("vbd_solve_apply",    VbdSolveApply.shader)
   , ("vbd_gather_spring",  VbdGatherSpring.shader)
   , ("vbd_gather_attachment", VbdGatherAttachment.shader)
+  , ("vbd_gather_triangle", VbdGatherTriangle.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
