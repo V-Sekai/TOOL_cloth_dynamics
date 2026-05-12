@@ -1262,6 +1262,44 @@ void Simulation::step() {
 		// violation. Default off (use the bit-equivalent λ=0 path).
 		static const bool s_avbdAl = (std::getenv("AVBD_AL") != nullptr);
 
+		// AVBD_RELAX=ω ∈ (0,1] applies host-side under-relaxation
+		// between iters: after each step(), readback positions, blend
+		//   x_blend = (1-ω) · x_prev_iter + ω · x_avbd
+		// and reupload. Damps per-vertex GS oscillation when ω < 1.
+		// At ω = 1 (default) the loop is bit-identical to pre-PR.
+		// Cost: one Metal readback + reupload per iter (~50µs ea on
+		// dress). Skipped entirely when ω == 1 to keep the hot path.
+		static const float s_avbdRelax = []() {
+			if (const char* e = std::getenv("AVBD_RELAX"))
+				return float(std::atof(e));
+			return 1.0f;
+		}();
+		const bool useRelax = (s_avbdRelax > 0.0f && s_avbdRelax < 1.0f);
+
+		// Convenience lambda for one iter + optional relaxation.
+		std::vector<float> posBeforeIter, posAfterIter;
+		if (useRelax) posBeforeIter.resize(3 * nV);
+		auto runOneIter = [&](int /*iterIdx*/) -> int {
+			if (useRelax) sysMat[0].avbd->readPositions(posBeforeIter);
+			int r = sysMat[0].avbd->step();
+			if (r != 0) return r;
+			if (s_avbdAl) {
+				sysMat[0].avbd->stepDualAttachments();
+				sysMat[0].avbd->stepDualMembrane();
+				sysMat[0].avbd->stepDualBending();
+			}
+			if (useRelax) {
+				sysMat[0].avbd->readPositions(posAfterIter);
+				const float oneMinus = 1.0f - s_avbdRelax;
+				for (size_t i = 0; i < posAfterIter.size(); ++i) {
+					posAfterIter[i] = oneMinus * posBeforeIter[i]
+					                  + s_avbdRelax * posAfterIter[i];
+				}
+				sysMat[0].avbd->updateState(posAfterIter.data(), predF.data());
+			}
+			return 0;
+		};
+
 		int rc = 0;
 		// Run the first half of iterations, snapshot positions, then
 		// run the second half. The snapshot lets us measure
@@ -1269,24 +1307,14 @@ void Simulation::step() {
 		// happening at iter N/2 vs N. Small delta = AVBD has settled.
 		const int firstHalf = s_avbdIters / 2;
 		for (int it = 0; it < firstHalf; ++it) {
-			rc = sysMat[0].avbd->step();
+			rc = runOneIter(it);
 			if (rc != 0) break;
-			if (s_avbdAl) {
-				sysMat[0].avbd->stepDualAttachments();
-				sysMat[0].avbd->stepDualMembrane();
-				sysMat[0].avbd->stepDualBending();
-			}
 		}
 		std::vector<float> avbdPosHalf;
 		if (rc == 0 && firstHalf > 0)
 			sysMat[0].avbd->readPositions(avbdPosHalf);
 		for (int it = firstHalf; it < s_avbdIters && rc == 0; ++it) {
-			rc = sysMat[0].avbd->step();
-			if (rc == 0 && s_avbdAl) {
-				sysMat[0].avbd->stepDualAttachments();
-				sysMat[0].avbd->stepDualMembrane();
-				sysMat[0].avbd->stepDualBending();
-			}
+			rc = runOneIter(it);
 		}
 		auto _avbd_t1 = std::chrono::steady_clock::now();
 		const long long us =
@@ -3418,7 +3446,11 @@ void Simulation::initializePrefactoredMatrices() {
 				// AVBD's membrane kernel needs this — without it every
 				// triangle is treated as canonical/equilateral rest,
 				// pulling the mesh toward an unphysical equilibrium.
-				const uint32_t nT = uint32_t(mesh.size());
+				const bool s_avbdNoMembrane = (std::getenv("AVBD_NO_MEMBRANE") != nullptr);
+				const uint32_t nT = s_avbdNoMembrane ? 0u : uint32_t(mesh.size());
+				if (s_avbdNoMembrane)
+					std::printf("[avbd] AVBD_NO_MEMBRANE=1: skipping %zu triangle uploads\n",
+					            mesh.size());
 				std::vector<uint32_t> triIdx(3 * nT);
 				std::vector<float>    triInvUV(4 * nT);
 				std::vector<float>    triK(nT, float(Triangle::k_stiff));
@@ -3438,14 +3470,16 @@ void Simulation::initializePrefactoredMatrices() {
 						if (a > maxAbsInvUV) { maxAbsInvUV = a; maxTri = i; }
 					}
 				}
-				std::printf("[avbd] inv_deltaUV range over %u tris: max |M|=%g "
-				            "at tri %u (verts %u,%u,%u; M=[%g,%g; %g,%g])\n",
-				            nT, maxAbsInvUV, maxTri,
-				            triIdx[3*maxTri+0], triIdx[3*maxTri+1], triIdx[3*maxTri+2],
-				            triInvUV[4*maxTri+0], triInvUV[4*maxTri+1],
-				            triInvUV[4*maxTri+2], triInvUV[4*maxTri+3]);
-				avbd->uploadTriangles(nT, triIdx.data(), triInvUV.data(),
-				                     triK.data());
+				if (nT > 0) {
+					std::printf("[avbd] inv_deltaUV range over %u tris: max |M|=%g "
+					            "at tri %u (verts %u,%u,%u; M=[%g,%g; %g,%g])\n",
+					            nT, maxAbsInvUV, maxTri,
+					            triIdx[3*maxTri+0], triIdx[3*maxTri+1], triIdx[3*maxTri+2],
+					            triInvUV[4*maxTri+0], triInvUV[4*maxTri+1],
+					            triInvUV[4*maxTri+2], triInvUV[4*maxTri+3]);
+					avbd->uploadTriangles(nT, triIdx.data(), triInvUV.data(),
+					                     triK.data());
+				}
 
 				// Upload attachment (point-pin) constraints from this
 				// sysMat's `attachments` vector. Each AttachmentSpring
@@ -3471,7 +3505,19 @@ void Simulation::initializePrefactoredMatrices() {
 				// with cotangent Laplacian weights (Vec4d weightVert)
 				// and rest magnitude `n`. Stiffness uses
 				// TriangleBending::k_stiff.
-				const uint32_t nB = uint32_t(bendingConstraints.size());
+				// AVBD_NO_BENDING=1 uploads zero bending constraints —
+				// experimental switch to test whether bending kernel
+				// is the source of the persistent drift on the dress
+				// (PR-G follow-up: if disabling bending closes the
+				// PD-vs-AVBD gap, bending has a kernel bug; if not,
+				// the gap is in membrane or per-vertex GS coupling).
+				const bool s_avbdNoBending = (std::getenv("AVBD_NO_BENDING") != nullptr);
+				const uint32_t nB = s_avbdNoBending
+				    ? 0u
+				    : uint32_t(bendingConstraints.size());
+				if (s_avbdNoBending)
+					std::printf("[avbd] AVBD_NO_BENDING=1: skipping %zu bending uploads\n",
+					            bendingConstraints.size());
 				std::vector<uint32_t> bendIdx(4 * nB);
 				std::vector<float>    bendWeight(4 * nB);
 				std::vector<float>    bendNTarget(nB);
