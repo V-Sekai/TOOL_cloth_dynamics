@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace cloth {
 
@@ -52,6 +53,13 @@ struct AvbdSolver::Impl {
     id<MTLBuffer> bufSpringStiffness = nil;  // float per spring
     id<MTLBuffer> bufSpringGradA     = nil;  // 3 floats per spring
     id<MTLBuffer> bufSpringHess      = nil;  // 6 floats per spring
+
+    // Vertex → spring CSR adjacency (built host-side in uploadSprings,
+    // mirroring Cloth.Avbd.AdjacencySpring's `native_decide`-pinned
+    // algorithm).
+    id<MTLBuffer> bufVertSpringOffset = nil; // uint per (nVerts+1)
+    id<MTLBuffer> bufVertSpringIdx    = nil; // uint per (2*nSprings)
+    id<MTLBuffer> bufVertSpringRole   = nil; // uint per (2*nSprings)
 
     uint32_t nVerts   = 0;
     uint32_t nSprings = 0;
@@ -134,6 +142,30 @@ AvbdSolver::~AvbdSolver() { delete impl_; }
 
 bool AvbdSolver::ok() const { return impl_ && impl_->ok; }
 
+// Metal's `float3` has 16-byte alignment, so `StructuredBuffer<float3>`
+// strides by 16 bytes (4 floats per vec3, last is padding). Host arrays
+// using tight 3-float-per-vec3 layout are scattered/gathered with the
+// padding inserted on upload and stripped on readback.
+static void uploadVec3Padded(id<MTLBuffer> dst, const float* src, uint32_t n) {
+    float* p = static_cast<float*>(dst.contents);
+    for (uint32_t i = 0; i < n; ++i) {
+        p[4*i + 0] = src[3*i + 0];
+        p[4*i + 1] = src[3*i + 1];
+        p[4*i + 2] = src[3*i + 2];
+        p[4*i + 3] = 0.0f;
+    }
+}
+
+static void readVec3Padded(std::vector<float>& dst, const id<MTLBuffer>& src, uint32_t n) {
+    dst.assign(3 * n, 0.0f);
+    const float* p = static_cast<const float*>(src.contents);
+    for (uint32_t i = 0; i < n; ++i) {
+        dst[3*i + 0] = p[4*i + 0];
+        dst[3*i + 1] = p[4*i + 1];
+        dst[3*i + 2] = p[4*i + 2];
+    }
+}
+
 void AvbdSolver::setupMesh(uint32_t nVerts,
                            const float* positions,
                            const float* predicted,
@@ -141,16 +173,19 @@ void AvbdSolver::setupMesh(uint32_t nVerts,
                            float invHSquared) {
     if (!ok()) return;
     impl_->nVerts = nVerts;
-    const NSUInteger bytesVec3 = 3 * nVerts * sizeof(float);
+    const NSUInteger bytesVec3Padded = 4 * nVerts * sizeof(float);
     const NSUInteger bytesScalar = nVerts * sizeof(float);
     const NSUInteger bytesHess = 6 * nVerts * sizeof(float);
     const MTLResourceOptions opts = MTLResourceStorageModeShared;
 
-    impl_->bufPositions = [impl_->device newBufferWithBytes:positions length:bytesVec3 options:opts];
-    impl_->bufPredicted = [impl_->device newBufferWithBytes:predicted length:bytesVec3 options:opts];
-    impl_->bufMass      = [impl_->device newBufferWithBytes:mass      length:bytesScalar options:opts];
-    impl_->bufGScratch  = [impl_->device newBufferWithLength:bytesVec3 options:opts];
+    impl_->bufPositions = [impl_->device newBufferWithLength:bytesVec3Padded options:opts];
+    impl_->bufPredicted = [impl_->device newBufferWithLength:bytesVec3Padded options:opts];
+    impl_->bufGScratch  = [impl_->device newBufferWithLength:bytesVec3Padded options:opts];
+    impl_->bufMass      = [impl_->device newBufferWithBytes:mass length:bytesScalar options:opts];
     impl_->bufHScratch  = [impl_->device newBufferWithLength:bytesHess options:opts];
+
+    uploadVec3Padded(impl_->bufPositions, positions, nVerts);
+    uploadVec3Padded(impl_->bufPredicted, predicted, nVerts);
 
     impl_->bufInitParams = [impl_->device newBufferWithLength:sizeof(VbdInitParams) options:opts];
     *static_cast<VbdInitParams*>(impl_->bufInitParams.contents) = {invHSquared};
@@ -167,7 +202,7 @@ void AvbdSolver::uploadSprings(uint32_t nSprings,
     impl_->nSprings = nSprings;
     const NSUInteger bytesU = nSprings * sizeof(uint32_t);
     const NSUInteger bytesF = nSprings * sizeof(float);
-    const NSUInteger bytesGrad = 3 * nSprings * sizeof(float);
+    const NSUInteger bytesGradPadded = 4 * nSprings * sizeof(float);
     const NSUInteger bytesHess = 6 * nSprings * sizeof(float);
     const MTLResourceOptions opts = MTLResourceStorageModeShared;
 
@@ -175,8 +210,47 @@ void AvbdSolver::uploadSprings(uint32_t nSprings,
     impl_->bufSpringP2Idx     = [impl_->device newBufferWithBytes:p2Idx     length:bytesU options:opts];
     impl_->bufSpringRestLen   = [impl_->device newBufferWithBytes:restLen   length:bytesF options:opts];
     impl_->bufSpringStiffness = [impl_->device newBufferWithBytes:stiffness length:bytesF options:opts];
-    impl_->bufSpringGradA     = [impl_->device newBufferWithLength:bytesGrad options:opts];
+    // gradA is `StructuredBuffer<float3>` → padded 16-byte stride per spring.
+    impl_->bufSpringGradA     = [impl_->device newBufferWithLength:bytesGradPadded options:opts];
     impl_->bufSpringHess      = [impl_->device newBufferWithLength:bytesHess options:opts];
+
+    // Build vertex→spring CSR on host. Faithful port of
+    // Cloth.Avbd.AdjacencySpring.SpringCsr.build: count incidences per
+    // vertex (each spring touches both endpoints), prefix-sum into
+    // offsets, second pass scatters spring id + role (0 for a, 1 for b).
+    const uint32_t nV = impl_->nVerts;
+    std::vector<uint32_t> counts(nV, 0u);
+    for (uint32_t i = 0; i < nSprings; ++i) {
+        counts[p1Idx[i]]++;
+        counts[p2Idx[i]]++;
+    }
+    std::vector<uint32_t> offsets(nV + 1, 0u);
+    for (uint32_t v = 0; v < nV; ++v) offsets[v + 1] = offsets[v] + counts[v];
+    const uint32_t totalInc = offsets[nV];
+    std::vector<uint32_t> springIdx(totalInc, 0u);
+    std::vector<uint32_t> role(totalInc, 0u);
+    std::vector<uint32_t> cursor(nV, 0u);
+    for (uint32_t i = 0; i < nSprings; ++i) {
+        const uint32_t a = p1Idx[i];
+        const uint32_t pa = offsets[a] + cursor[a];
+        springIdx[pa] = i;  role[pa] = 0u;  cursor[a]++;
+        const uint32_t b = p2Idx[i];
+        const uint32_t pb = offsets[b] + cursor[b];
+        springIdx[pb] = i;  role[pb] = 1u;  cursor[b]++;
+    }
+
+    impl_->bufVertSpringOffset =
+        [impl_->device newBufferWithBytes:offsets.data()
+                                   length:offsets.size() * sizeof(uint32_t)
+                                  options:opts];
+    impl_->bufVertSpringIdx =
+        [impl_->device newBufferWithBytes:springIdx.data()
+                                   length:springIdx.size() * sizeof(uint32_t)
+                                  options:opts];
+    impl_->bufVertSpringRole =
+        [impl_->device newBufferWithBytes:role.data()
+                                   length:role.size() * sizeof(uint32_t)
+                                  options:opts];
 }
 
 int AvbdSolver::step() {
@@ -211,6 +285,20 @@ int AvbdSolver::step() {
         [enc setBuffer:impl_->bufSpringHess      offset:0 atIndex:6];
         [enc dispatchThreads:MTLSizeMake(impl_->nSprings, 1, 1)
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+
+        // 3. vbd_gather_spring: per-vertex gather of spring contributions
+        //    via CSR adjacency. Reads gradA/hess produced by step 2 and
+        //    accumulates into the gScratch/hScratch written by step 1.
+        [enc setComputePipelineState:impl_->psoGatherSpring];
+        [enc setBuffer:impl_->bufSpringGradA      offset:0 atIndex:0];
+        [enc setBuffer:impl_->bufSpringHess       offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufVertSpringOffset offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufVertSpringIdx    offset:0 atIndex:3];
+        [enc setBuffer:impl_->bufVertSpringRole   offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufGScratch         offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufHScratch         offset:0 atIndex:6];
+        [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     }
 
     [enc endEncoding];
@@ -228,9 +316,8 @@ void AvbdSolver::readScratch(std::vector<float>& gScratch_out,
         return;
     }
     const uint32_t n = impl_->nVerts;
-    gScratch_out.assign(3 * n, 0.0f);
+    readVec3Padded(gScratch_out, impl_->bufGScratch, n);
     hScratch_out.assign(6 * n, 0.0f);
-    std::memcpy(gScratch_out.data(), impl_->bufGScratch.contents, 3 * n * sizeof(float));
     std::memcpy(hScratch_out.data(), impl_->bufHScratch.contents, 6 * n * sizeof(float));
 }
 
@@ -242,9 +329,8 @@ void AvbdSolver::readSpringForce(std::vector<float>& gradA_out,
         return;
     }
     const uint32_t n = impl_->nSprings;
-    gradA_out.assign(3 * n, 0.0f);
+    readVec3Padded(gradA_out, impl_->bufSpringGradA, n);
     hess_out.assign(6 * n, 0.0f);
-    std::memcpy(gradA_out.data(), impl_->bufSpringGradA.contents, 3 * n * sizeof(float));
     std::memcpy(hess_out.data(),  impl_->bufSpringHess.contents,  6 * n * sizeof(float));
 }
 
