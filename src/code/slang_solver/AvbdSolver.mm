@@ -1033,6 +1033,11 @@ void AvbdSolver::updateState(const float* positions, const float* predicted) {
     uploadVec3Padded(impl_->bufPredicted, predicted, impl_->nVerts);
 }
 
+void AvbdSolver::updateAttachmentFixedPos(const float* fixedPos) {
+    if (!ok() || impl_->nAttach == 0 || !impl_->bufAttachFixedPos) return;
+    uploadVec3Padded(impl_->bufAttachFixedPos, fixedPos, impl_->nAttach);
+}
+
 int AvbdSolver::stepDualAttachments() {
     if (!ok() || !impl_->meshReady) return -1;
     if (impl_->nAttach == 0) return 0;
