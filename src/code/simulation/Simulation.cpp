@@ -31,12 +31,21 @@
 
 #ifdef __APPLE__
 #include "../slang_solver/MetalCGSolver.h"
+#include "../slang_solver/AvbdSolver.h"
 #endif
 
 namespace {
     // Runtime selector. Set USE_SLANG_CG=1 in the environment to route
     // the LLT back-solve in step() through the Metal CG dispatcher.
     bool g_useSlangCG = (std::getenv("USE_SLANG_CG") != nullptr);
+
+    // Runtime selector. Set USE_AVBD=1 in the environment to route the
+    // PD outer loop through the Apple Silicon AVBD vertex-block-update
+    // pipeline (see todo.md / AvbdSolver). When set, an AvbdSolver
+    // instance is constructed at scene initialization. This slice only
+    // wires the scaffold — actual step() routing through AVBD lands
+    // in a follow-up PR.
+    bool g_useAvbd = (std::getenv("USE_AVBD") != nullptr);
 
     // metallib search path. Override with SLANG_METALLIB_DIR=... in env.
     std::string slangMetallibDir() {
@@ -3155,6 +3164,24 @@ void Simulation::initializePrefactoredMatrices() {
 				             "[slang-cg] FAILED to build MetalCGSolver for "
 				             "sysMat[%d] (rows=%u); falling back to Eigen LLT\n",
 				             sysMatId, csr.rows);
+			}
+		}
+
+		if (g_useAvbd && sysMatId == 0) {
+			// PR-E scaffold: instantiate AvbdSolver at scene init to
+			// confirm all 10 AVBD kernels load on this device. The
+			// solver is constructed but not yet wired into step()
+			// — that's a follow-up PR. We attach to sysMat[0] only
+			// because AvbdSolver is per-scene (not per-sysMat).
+			auto avbd = std::make_shared<cloth::AvbdSolver>(
+				slangMetallibDir().c_str());
+			if (avbd->ok()) {
+				sysMat[sysMatId].avbd = avbd;
+				std::printf("[avbd] AvbdSolver loaded — 10 AVBD kernels ready (scaffold; step() routing in follow-up PR)\n");
+			} else {
+				std::fprintf(stderr,
+				             "[avbd] FAILED to construct AvbdSolver; "
+				             "USE_AVBD=1 will be ignored\n");
 			}
 		}
 #endif

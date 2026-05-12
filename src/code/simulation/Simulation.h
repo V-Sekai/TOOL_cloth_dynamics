@@ -38,7 +38,7 @@
 #include "AttachmentSpring.h"
 #include <memory>
 
-namespace cloth { class MetalCGSolver; }
+namespace cloth { class MetalCGSolver; class AvbdSolver; }
 
 #include "Constraint.h"
 #include "FixedPoint.h"
@@ -409,6 +409,14 @@ public:
 		// CSR to the GPU.
 		std::shared_ptr<cloth::MetalCGSolver> slangCG;
 
+		// Optional AVBD vertex-block-update solver, attached to sysMat[0]
+		// when USE_AVBD=1. Loads all 10 AVBD kernels (vbd_init,
+		// vbd_gather_{spring,attachment,triangle,bending},
+		// vbd_solve_apply, and the four per-constraint *_force kernels).
+		// Per-step routing through this solver is the PR-E continuation;
+		// the scaffold PR only constructs it at scene init.
+		std::shared_ptr<cloth::AvbdSolver> avbd;
+
 		SystemMatrix() {}
 
 		SystemMatrix(const SystemMatrix &other) {
@@ -424,6 +432,7 @@ public:
 			fixedPoints = other.fixedPoints;
 			constraintNum = other.constraintNum;
 			slangCG = other.slangCG;       // share; not deep-copied
+			avbd    = other.avbd;          // share; not deep-copied
 
 			for (int i = 0; i < Constraint::CONSTRAINT_NUM; i++) {
 				A_t_times_A_pertype[i] = other.A_t_times_A_pertype[i];
