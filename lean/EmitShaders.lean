@@ -52,6 +52,9 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("vbd_solve_apply_backward", VbdSolveApplyBackward.shader)
   , ("vbd_init_backward", VbdInitBackward.shader)
   , ("vbd_gather_triangle_backward", VbdGatherTriangleBackward.shader)
+  , ("vbd_gather_attachment_backward", VbdGatherAttachmentBackward.shader)
+  , ("vbd_gather_bending_backward", VbdGatherBendingBackward.shader)
+  , ("vbd_gather_spring_backward", VbdGatherSpringBackward.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
