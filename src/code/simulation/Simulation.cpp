@@ -1302,6 +1302,11 @@ void Simulation::step() {
 		// accumulating). If drift dominates: AVBD is "snapping to
 		// equilibrium" rather than tracking the implicit-Euler step.
 		float predMax = 0.0f, driftMax = 0.0f;
+		// Track which vertex hosts the largest drift — picking
+		// between "attachment-adjacent", "free-edge", or "interior"
+		// helps narrow the per-vertex GS divergence story.
+		uint32_t driftMaxVert = 0;
+		int driftMaxAxis = 0;
 		int nanCount = 0;
 		for (uint32_t i = 0; i < nV; ++i) {
 			for (int axis = 0; axis < 3; ++axis) {
@@ -1312,7 +1317,11 @@ void Simulation::step() {
 				if (!std::isfinite(ax)) ++nanCount;
 				if (dx > dxMax) dxMax = dx;
 				if (dp > predMax) predMax = dp;
-				if (dd > driftMax) driftMax = dd;
+				if (dd > driftMax) {
+					driftMax = dd;
+					driftMaxVert = i;
+					driftMaxAxis = axis;
+				}
 				dxMean += dx;
 				if (!avbdPosHalf.empty()) {
 					const float dconv = std::fabs(ax - avbdPosHalf[3*i + axis]);
@@ -1329,9 +1338,10 @@ void Simulation::step() {
 		// needed.
 		std::printf("[avbd-shadow] step %zu  dof=%u  iters=%d  rc=%d  wall=%lld us"
 		            "  |Δx|_max=%g  |Δx|_mean=%g  pred_max=%g  drift_max=%g"
-		            "  conv_max=%g  conv_mean=%g  nan=%d\n",
+		            "  drift@v%u.%c  conv_max=%g  conv_mean=%g  nan=%d\n",
 		            forwardRecords.size(), nV * 3u, s_avbdIters, rc, us,
 		            dxMax, dxMean, predMax, driftMax,
+		            driftMaxVert, "xyz"[driftMaxAxis],
 		            convergeMax, convergeMean, nanCount);
 	}
 #endif
@@ -3412,6 +3422,8 @@ void Simulation::initializePrefactoredMatrices() {
 				std::vector<uint32_t> triIdx(3 * nT);
 				std::vector<float>    triInvUV(4 * nT);
 				std::vector<float>    triK(nT, float(Triangle::k_stiff));
+				float maxAbsInvUV = 0.0f;
+				uint32_t maxTri = 0;
 				for (uint32_t i = 0; i < nT; ++i) {
 					triIdx[3*i + 0] = uint32_t(mesh[i].p0_idx);
 					triIdx[3*i + 1] = uint32_t(mesh[i].p1_idx);
@@ -3421,7 +3433,17 @@ void Simulation::initializePrefactoredMatrices() {
 					triInvUV[4*i + 1] = float(mesh[i].inv_deltaUV(0, 1));
 					triInvUV[4*i + 2] = float(mesh[i].inv_deltaUV(1, 0));
 					triInvUV[4*i + 3] = float(mesh[i].inv_deltaUV(1, 1));
+					for (int j = 0; j < 4; ++j) {
+						const float a = std::fabs(triInvUV[4*i + j]);
+						if (a > maxAbsInvUV) { maxAbsInvUV = a; maxTri = i; }
+					}
 				}
+				std::printf("[avbd] inv_deltaUV range over %u tris: max |M|=%g "
+				            "at tri %u (verts %u,%u,%u; M=[%g,%g; %g,%g])\n",
+				            nT, maxAbsInvUV, maxTri,
+				            triIdx[3*maxTri+0], triIdx[3*maxTri+1], triIdx[3*maxTri+2],
+				            triInvUV[4*maxTri+0], triInvUV[4*maxTri+1],
+				            triInvUV[4*maxTri+2], triInvUV[4*maxTri+3]);
 				avbd->uploadTriangles(nT, triIdx.data(), triInvUV.data(),
 				                     triK.data());
 
