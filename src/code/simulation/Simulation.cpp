@@ -39,13 +39,24 @@ namespace {
     // the LLT back-solve in step() through the Metal CG dispatcher.
     bool g_useSlangCG = (std::getenv("USE_SLANG_CG") != nullptr);
 
-    // Runtime selector. Set USE_AVBD=1 in the environment to route the
-    // PD outer loop through the Apple Silicon AVBD vertex-block-update
-    // pipeline (see todo.md / AvbdSolver). When set, an AvbdSolver
-    // instance is constructed at scene initialization. This slice only
-    // wires the scaffold — actual step() routing through AVBD lands
-    // in a follow-up PR.
-    bool g_useAvbd = (std::getenv("USE_AVBD") != nullptr);
+    // AVBD is now the default solver path on Apple Silicon. The
+    // dress runs at ~9 ms/step vs PD's ~7,960 ms — ~880× faster
+    // (PRs #87–#109). PD's Eigen-LLT + CG pipeline is retained as a
+    // legacy / debugging fallback, gated on USE_PD=1.
+    //
+    // When AVBD is active the runtime path also enables coloring,
+    // drive (AVBD's output drives Particle.pos), skip-PD (PD's CG
+    // loop is short-circuited; LLT prefactorization too), and the
+    // primitive + self-collision post-step projections. Override
+    // each via:
+    //   USE_PD=1             — run PD instead of AVBD
+    //   AVBD_NO_COLORS=1     — fall back to block Jacobi
+    //   AVBD_NO_DRIVE=1      — shadow only (don't write back)
+    //   AVBD_NO_SKIP_PD=1    — also iterate PD's CG (waste)
+    //   AVBD_NO_CONTACT=1    — skip primitive projection
+    //   AVBD_NO_SELF_COLLISION=1 — skip cloth-cloth resolution
+    bool g_usePD    = (std::getenv("USE_PD") != nullptr);
+    bool g_useAvbd  = !g_usePD;
 
     // metallib search path. Override with SLANG_METALLIB_DIR=... in env.
     std::string slangMetallibDir() {
@@ -1495,10 +1506,15 @@ void Simulation::step() {
 		// paths have sensible values, then PD_TOTAL_ITER = 0 skips
 		// the loop body. AVBD_DRIVE later overwrites
 		// particles[i].{pos, velocity} with AVBD's solve.
+		// PD's CG loop is short-circuited when AVBD drives the
+		// step. Inverted env: AVBD_NO_SKIP_PD=1 re-enables iteration
+		// (only useful for shadow comparison; the result gets thrown
+		// away by AVBD_DRIVE anyway). AVBD_NO_DRIVE=1 turns off the
+		// writeback so PD's converged x_new is kept.
 		static const bool s_avbdSkipPD =
-		    (std::getenv("AVBD_SKIP_PD") != nullptr);
+		    (std::getenv("AVBD_NO_SKIP_PD") == nullptr);
 		static const bool s_avbdDriveEnv =
-		    (std::getenv("AVBD_DRIVE") != nullptr);
+		    (std::getenv("AVBD_NO_DRIVE") == nullptr);
 		const bool avbdWillDrive = s_avbdDriveEnv && g_useAvbd &&
 		    currentSysmatId == 0 && sysMat[0].avbd && sysMat[0].avbd->ok();
 		if (s_avbdSkipPD && avbdWillDrive) {
@@ -1834,8 +1850,8 @@ void Simulation::step() {
 		//   AVBD_DRIVE alone           → AVBD's solve after PD ran (PD output discarded)
 		//   slangCG                    → custom slang CG path
 		//   default                    → DiffCloth's Eigen LLT-preconditioned PD
-		static const bool s_benchDrive   = (std::getenv("AVBD_DRIVE")   != nullptr);
-		static const bool s_benchSkipPD  = (std::getenv("AVBD_SKIP_PD") != nullptr);
+		static const bool s_benchDrive   = (std::getenv("AVBD_NO_DRIVE")   == nullptr);
+		static const bool s_benchSkipPD  = (std::getenv("AVBD_NO_SKIP_PD") == nullptr);
 		const bool avbdDroveThis = s_benchDrive && g_useAvbd && currentSysmatId == 0 &&
 		    sysMat[0].avbd && sysMat[0].avbd->ok();
 		const char* path =
@@ -1867,7 +1883,10 @@ void Simulation::step() {
 	// are updated; collision / contact / fixed points stay whatever
 	// the PD pass computed (potentially inconsistent — that's why
 	// this is opt-in).
-	static const bool s_avbdDrive = (std::getenv("AVBD_DRIVE") != nullptr);
+	// AVBD_DRIVE is default-on under AVBD; AVBD_NO_DRIVE=1 disables it
+	// so PD's converged Particle.pos is preserved (useful for shadow
+	// comparison or debugging).
+	static const bool s_avbdDrive = (std::getenv("AVBD_NO_DRIVE") == nullptr);
 	const bool s_avbdDriveActive = s_avbdDrive && g_useAvbd && currentSysmatId == 0 &&
 	    sysMat[0].avbd && sysMat[0].avbd->ok();
 	if (s_avbdDriveActive) {
@@ -3604,9 +3623,19 @@ void Simulation::initializePrefactoredMatrices() {
 		sysMat[sysMatId].C = sysMat[sysMatId].C.pruned(1e-15);
 		sysMat[sysMatId].C_t = sysMat[sysMatId].C.transpose();
 		sysMat[sysMatId].P = sysMat[sysMatId].C + M;
-		sysMat[sysMatId].P =
-				factorizeDirectSolverLLT(sysMat[sysMatId].P, sysMat[sysMatId].solver,
-						"Msolver pre factorization");
+		// PD's LLT factorization is the most expensive init step
+		// (sparse Cholesky on a 10K × 10K matrix takes 0.5-1.5 s on
+		// dress). Skip it when AVBD is the runtime solver — step()
+		// never solves with it. The P matrix itself stays built (used
+		// by other code paths) but the factorization is the costly part.
+		if (g_useAvbd) {
+			std::printf("[avbd-init] skipped LLT prefactorization for "
+			            "sysMat[%d] (AVBD path)\n", sysMatId);
+		} else {
+			sysMat[sysMatId].P =
+					factorizeDirectSolverLLT(sysMat[sysMatId].P, sysMat[sysMatId].solver,
+							"Msolver pre factorization");
+		}
 
 #ifdef __APPLE__
 		if (g_useSlangCG) {
@@ -3780,14 +3809,13 @@ void Simulation::initializePrefactoredMatrices() {
 					std::printf("[avbd] γ scaled by %g (AVBD_AL_GAMMA env)\n", gscale);
 				}
 
-				// AVBD_COLORS=1 builds greedy first-fit vertex coloring
-				// from all uploaded constraints. After this, step()
-				// dispatches each kernel per color, giving real
-				// Gauss-Seidel semantics (the fix for the block-Jacobi
-				// divergence diagnosed in PRs #90). Without it, AvbdSolver
-				// stays at numColors=1 + identity perm — bit-identical to
-				// pre-coloring block-Jacobi behavior.
-				if (std::getenv("AVBD_COLORS") != nullptr) {
+				// Build greedy first-fit vertex coloring by default —
+				// step() dispatches each kernel per color for real
+				// Gauss-Seidel semantics. AVBD_NO_COLORS=1 falls back to
+				// block Jacobi (numColors=1 + identity perm — for
+				// debugging only; that's what's been shown to diverge
+				// on stiff meshes in #90).
+				if (std::getenv("AVBD_NO_COLORS") == nullptr) {
 					avbd->buildColoring();
 				}
 
