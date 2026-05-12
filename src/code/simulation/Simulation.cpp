@@ -1486,6 +1486,28 @@ void Simulation::step() {
 		timeSteptimer.toc();
 		PD_TOTAL_ITER = (-std::log10(forwardConvergenceThreshold)) * 150;
 
+#ifdef __APPLE__
+		// AVBD_SKIP_PD=1 + AVBD_DRIVE=1: short-circuit PD's CG loop
+		// entirely. AVBD provides the per-step positions; PD's
+		// converged x_new would just get overwritten by AVBD_DRIVE
+		// anyway, so iterating it is pure waste. Initialize
+		// x_new / v_new to the inertial predictor so post-loop code
+		// paths have sensible values, then PD_TOTAL_ITER = 0 skips
+		// the loop body. AVBD_DRIVE later overwrites
+		// particles[i].{pos, velocity} with AVBD's solve.
+		static const bool s_avbdSkipPD =
+		    (std::getenv("AVBD_SKIP_PD") != nullptr);
+		static const bool s_avbdDriveEnv =
+		    (std::getenv("AVBD_DRIVE") != nullptr);
+		const bool avbdWillDrive = s_avbdDriveEnv && g_useAvbd &&
+		    currentSysmatId == 0 && sysMat[0].avbd && sysMat[0].avbd->ok();
+		if (s_avbdSkipPD && avbdWillDrive) {
+			x_new = s_n;
+			v_new = (s_n - x_n) / sceneConfig.timeStep;
+			PD_TOTAL_ITER = 0;
+		}
+#endif
+
 		for (int iterIdx = 0; iterIdx < PD_TOTAL_ITER; iterIdx++) {
 			timeSteptimer.tic("iter init");
 			std::pair<Eigen::VectorXd, Eigen::VectorXd> posVelVec =
