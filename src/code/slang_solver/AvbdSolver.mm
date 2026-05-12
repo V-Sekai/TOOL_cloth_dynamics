@@ -91,6 +91,7 @@ struct AvbdSolver::Impl {
     // Triangle membrane constraint buffers (allocated by uploadTriangles).
     id<MTLBuffer> bufTriIdx            = nil; // uint per (3 * nTri) — corners
     id<MTLBuffer> bufTriStiffness      = nil; // float per nTri
+    id<MTLBuffer> bufTriInvUV          = nil; // float per (4 * nTri) — rest material inv (2x2 per tri)
     id<MTLBuffer> bufTriGrad           = nil; // padded float3 per (3 * nTri)
     id<MTLBuffer> bufTriHessScalar     = nil; // float per (3 * nTri)
 
@@ -395,16 +396,19 @@ void AvbdSolver::uploadAttachments(uint32_t nAttach,
 
 void AvbdSolver::uploadTriangles(uint32_t nTri,
                                   const uint32_t* triIdx,
+                                  const float* invUV,
                                   const float* stiffness) {
     if (!ok()) return;
     impl_->nTri = nTri;
     const NSUInteger bytesTriIdx = 3 * nTri * sizeof(uint32_t);
+    const NSUInteger bytesInvUV  = 4 * nTri * sizeof(float);
     const NSUInteger bytesF      = nTri * sizeof(float);
     const NSUInteger bytesGradPadded   = 4 * 3 * nTri * sizeof(float);
     const NSUInteger bytesHessScalar   = 3 * nTri * sizeof(float);
     const MTLResourceOptions opts = MTLResourceStorageModeShared;
 
     impl_->bufTriIdx        = [impl_->device newBufferWithBytes:triIdx    length:bytesTriIdx options:opts];
+    impl_->bufTriInvUV      = [impl_->device newBufferWithBytes:invUV     length:bytesInvUV  options:opts];
     impl_->bufTriStiffness  = [impl_->device newBufferWithBytes:stiffness length:bytesF      options:opts];
     impl_->bufTriGrad       = [impl_->device newBufferWithLength:bytesGradPadded options:opts];
     impl_->bufTriHessScalar = [impl_->device newBufferWithLength:bytesHessScalar options:opts];
@@ -602,6 +606,7 @@ int AvbdSolver::step() {
         [enc setBuffer:impl_->bufTriLambda1     offset:0 atIndex:4];
         [enc setBuffer:impl_->bufTriGrad        offset:0 atIndex:5];
         [enc setBuffer:impl_->bufTriHessScalar  offset:0 atIndex:6];
+        [enc setBuffer:impl_->bufTriInvUV       offset:0 atIndex:7];
         [enc dispatchThreads:MTLSizeMake(impl_->nTri, 1, 1)
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
 

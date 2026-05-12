@@ -82,11 +82,15 @@ public:
 
     // Upload triangle membrane (in-plane stretch) constraints.
     // `nTri` triangles with corner vertex indices `triIdx` (length
-    // 3*nTri, interleaved (i0,i1,i2) per triangle) and stiffness
-    // `stiffness[c]`. Allocates output buffers for
-    // triangle_membrane_force (grad, hessScalar at slot 3*c+r).
+    // 3*nTri, interleaved (i0,i1,i2) per triangle), per-triangle
+    // rest material inverse `invUV` (length 4*nTri, row-major 2x2
+    // per triangle: [m00, m01, m10, m11] from DiffCloth's
+    // `Triangle::inv_deltaUV`), and stiffness `stiffness[c]`.
+    // Allocates output buffers for triangle_membrane_force
+    // (grad, hessScalar at slot 3*c+r).
     void uploadTriangles(uint32_t nTri,
                          const uint32_t* triIdx,
+                         const float* invUV,
                          const float* stiffness);
 
     // Upload dihedral bending constraints. `nBend` bending stencils

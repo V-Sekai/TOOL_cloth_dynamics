@@ -1,36 +1,45 @@
 // Real-input validator for Cloth.SlangCodegen.TriangleMembraneForce —
 // AVBD per-triangle in-plane stretch force (PR-A of AVBD port).
 //
-// Per triangle c with vertices (i0,i1,i2) and stiffness k:
-//   F = [p1-p0 | p2-p0],  R = closest-rotation-in-image-plane(F)
-//   e0 = F.col(0) − R.col(0)
-//   e1 = F.col(1) − R.col(1)
-//   grad[3c+0] = −k · (e0 + e1)
-//   grad[3c+1] = +k · e0
-//   grad[3c+2] = +k · e1
-//   hessScalar[3c+0] = 2·k
-//   hessScalar[3c+1] = k
-//   hessScalar[3c+2] = k
+// Per triangle c with vertices (i0,i1,i2), inv_deltaUV M (row-major
+// 2x2: m00, m01, m10, m11), and stiffness k:
+//   P = [p1-p0 | p2-p0]
+//   F = P · M = [P*M.col(0) | P*M.col(1)]
+//   R = closest-rotation-in-image-plane(F)
+//   e0  = F.col(0) − R.col(0)
+//   e1  = F.col(1) − R.col(1)
+//   grad[3c+0] = -k · (e0·(m00+m10) + e1·(m01+m11))
+//   grad[3c+1] = +k · (e0·m00       + e1·m01)
+//   grad[3c+2] = +k · (e0·m10       + e1·m11)
+//   hessScalar[3c+0] = k · ((m00+m10)² + (m01+m11)²)
+//   hessScalar[3c+1] = k · (m00² + m01²)
+//   hessScalar[3c+2] = k · (m10² + m11²)
 //
-// Test fixture (2 triangles, 6 verts):
+// Test fixture (3 triangles, 6 verts):
 //
-// Triangle 0 — stretched 2x in x and y, k=1:
+// Triangle 0 — stretched 2x, M = I, k=1 (bit-exact pre-IUV result):
 //   v0=(0,0,0), v1=(2,0,0), v2=(0,2,0)
-//   F = [(2,0,0)|(0,2,0)], 2D form [2,0;0,2], closest rot = I
-//   R = [(1,0,0)|(0,1,0)]
+//   F = [(2,0,0)|(0,2,0)] = P, closest rot R = I
 //   e0=(1,0,0), e1=(0,1,0)
-//   grad[0] = (−1, −1, 0)
-//   grad[1] = (1, 0, 0)
-//   grad[2] = (0, 1, 0)
-//   hess = [2, 1, 1]
+//   grad = (-1,-1,0), (1,0,0), (0,1,0)
+//   hess = 2, 1, 1
 //
-// Triangle 1 — unit rest triangle, k=3:
+// Triangle 1 — unit rest triangle, M = I, k=3:
 //   v3=(10,10,10), v4=(11,10,10), v5=(10,11,10)
-//   F = [(1,0,0)|(0,1,0)] = R, so e0=e1=(0,0,0)
-//   grad = [(0,0,0)] × 3
-//   hess = [6, 3, 3]
+//   F = [(1,0,0)|(0,1,0)] = R, e0=e1=(0,0,0)
+//   grad = (0,0,0) × 3
+//   hess = 6, 3, 3
 //
-// Padding (slots 2..63): idx=(0,1,2), k=0 → safe rotation math + zero grad/hess.
+// Triangle 2 — same positions as triangle 0 but M = 2·I, k=1:
+//   F = P · 2I = [(4,0,0)|(0,4,0)], closest rot R = I (unit columns)
+//   e0=(3,0,0), e1=(0,3,0); (m00+m10)=2, (m01+m11)=2
+//   grad = -(e0·2 + e1·2) = (-6,-6,0)
+//        = (e0·2 + e1·0) = (6,0,0)
+//        = (e0·0 + e1·2) = (0,6,0)
+//   hess = ((2)²+(2)²) = 8; ((2)²+0²) = 4; (0²+(2)²) = 4
+//
+// Padding (slots 3..63): idx=(0,1,2), k=0, M=I → safe rotation math
+// + zero grad/hess.
 
 #include <chrono>
 #include <cmath>
@@ -45,7 +54,7 @@ static constexpr double kBudgetSeconds = 5.0;
 int main() {
     const auto t0 = std::chrono::steady_clock::now();
 
-    constexpr uint32_t N_TRI = 2;
+    constexpr uint32_t N_TRI = 3;
     constexpr uint32_t GROUP_SIZE = 64;
 
     std::vector<Vector<float, 3>> positions = {
@@ -61,6 +70,15 @@ int main() {
     std::vector<float>            stiffness(GROUP_SIZE, 0.0f);
     std::vector<Vector<float, 3>> grad(3 * GROUP_SIZE, Vector<float, 3>(0.0f));
     std::vector<float>            hessScalar(3 * GROUP_SIZE, 0.0f);
+    // M = identity for every triangle (padding default). Test
+    // triangle 2 overrides to 2·I below.
+    std::vector<float>            inv_deltaUV(4 * GROUP_SIZE, 0.0f);
+    for (uint32_t c = 0; c < GROUP_SIZE; ++c) {
+        inv_deltaUV[4*c + 0] = 1.0f; // m00
+        inv_deltaUV[4*c + 1] = 0.0f; // m01
+        inv_deltaUV[4*c + 2] = 0.0f; // m10
+        inv_deltaUV[4*c + 3] = 1.0f; // m11
+    }
 
     // Default padding: idx = (0, 1, 2) (well-defined positions), k = 0
     for (uint32_t c = 0; c < GROUP_SIZE; ++c) {
@@ -69,13 +87,18 @@ int main() {
 
     idx[0] = 0u; idx[1] = 1u; idx[2] = 2u; stiffness[0] = 1.0f;
     idx[3] = 3u; idx[4] = 4u; idx[5] = 5u; stiffness[1] = 3.0f;
+    idx[6] = 0u; idx[7] = 1u; idx[8] = 2u; stiffness[2] = 1.0f;
+    // Triangle 2: M = 2·I
+    inv_deltaUV[4*2 + 0] = 2.0f;
+    inv_deltaUV[4*2 + 3] = 2.0f;
 
     GlobalParams_0 gp{};
-    gp.positions_0.data  = positions.data();  gp.positions_0.count  = positions.size();
-    gp.idx_0.data        = idx.data();        gp.idx_0.count        = idx.size();
-    gp.stiffness_0.data  = stiffness.data();  gp.stiffness_0.count  = stiffness.size();
-    gp.grad_0.data       = grad.data();       gp.grad_0.count       = grad.size();
-    gp.hessScalar_0.data = hessScalar.data(); gp.hessScalar_0.count = hessScalar.size();
+    gp.positions_0.data    = positions.data();    gp.positions_0.count    = positions.size();
+    gp.idx_0.data          = idx.data();          gp.idx_0.count          = idx.size();
+    gp.stiffness_0.data    = stiffness.data();    gp.stiffness_0.count    = stiffness.size();
+    gp.grad_0.data         = grad.data();         gp.grad_0.count         = grad.size();
+    gp.hessScalar_0.data   = hessScalar.data();   gp.hessScalar_0.count   = hessScalar.size();
+    gp.inv_deltaUV_0.data  = inv_deltaUV.data();  gp.inv_deltaUV_0.count  = inv_deltaUV.size();
 
     ComputeVaryingInput vi{};
     vi.startGroupID = uint3(0, 0, 0);
@@ -85,10 +108,12 @@ int main() {
     const float expected_grad[N_TRI][3][3] = {
         { {-1.0f, -1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f} },
         { { 0.0f,  0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} },
+        { {-6.0f, -6.0f, 0.0f}, {6.0f, 0.0f, 0.0f}, {0.0f, 6.0f, 0.0f} },
     };
     const float expected_hess[N_TRI][3] = {
         {2.0f, 1.0f, 1.0f},
         {6.0f, 3.0f, 3.0f},
+        {8.0f, 4.0f, 4.0f},
     };
 
     int   fails        = 0;
