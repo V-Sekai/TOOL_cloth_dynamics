@@ -235,6 +235,11 @@ public:
     // Each accessor is safe to call after stepBackward() succeeds; the
     // corresponding constraint type must have been uploaded.
     void readPositionsGrad(std::vector<float>& out) const;
+    // Per-vertex ∂L/∂mass — emitted by `vbd_init_backward` (PR-G Brick B,
+    // CHI-14). The inertial term is the only place mass appears in the
+    // forward, so this is the full density / mass gradient. Vector of
+    // length `nVerts`. Empty if backward not run.
+    void readMassGrad(std::vector<float>& mass_grad) const;
     void readSpringGrad(std::vector<float>& restLen_grad,
                         std::vector<float>& stiff_grad) const;
     void readAttachGrad(std::vector<float>& fixedPos_grad,
