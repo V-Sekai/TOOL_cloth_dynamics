@@ -28,6 +28,13 @@ struct VbdGatherParams {
     uint32_t colorOffset;
 };
 
+// Matches the SelfCollisionScanParams struct emitted by
+// Cloth.SlangCodegen.SelfCollisionScan.
+struct SelfCollisionScanParams {
+    uint32_t nVerts;
+    uint32_t K;
+};
+
 // Matches the VbdSolveApplyParams struct emitted by
 // Cloth.SlangCodegen.VbdSolveApply (single uint colorOffset that
 // shifts the lane-to-vertex index lookup, supporting coloring-aware
@@ -63,6 +70,16 @@ struct AvbdSolver::Impl {
     id<MTLComputePipelineState> psoTriangleBendingForce  = nil;        // legacy non-AL
     id<MTLComputePipelineState> psoTriangleBendingForceAl = nil;       // AL-augmented (active)
     id<MTLComputePipelineState> psoTriangleBendingDualUpdate = nil;
+    id<MTLComputePipelineState> psoSelfCollisionScan = nil;
+
+    // Self-collision GPU scan state (allocated by
+    // uploadSelfCollisionRadii). bufNeighbors holds nVerts·K uints,
+    // each row listing up to K overlapping neighbor indices for the
+    // vertex (UINT_MAX sentinel for empty slots).
+    id<MTLBuffer> bufRadii       = nil;
+    id<MTLBuffer> bufNeighbors   = nil;
+    uint32_t      selfCollK      = 0;     // 0 = not uploaded
+    bool          selfCollReady  = false;
 
     // Per-vertex state buffers (allocated by setupMesh).
     id<MTLBuffer> bufPositions = nil;   // length = 3 * nVerts (float)
@@ -308,11 +325,12 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     id<MTLLibrary> libTriMembraneDualUpdate  = Impl::loadLib(impl_->device, root + "triangle_membrane_dual_update.metallib",  "triangle_membrane_dual_update");
     id<MTLLibrary> libTriBendingForceAl      = Impl::loadLib(impl_->device, root + "triangle_bending_force_al.metallib",      "triangle_bending_force_al");
     id<MTLLibrary> libTriBendingDualUpdate   = Impl::loadLib(impl_->device, root + "triangle_bending_dual_update.metallib",   "triangle_bending_dual_update");
+    id<MTLLibrary> libSelfCollisionScan      = Impl::loadLib(impl_->device, root + "self_collision_scan.metallib",            "self_collision_scan");
     if (!libInit || !libSpring || !libAttachment || !libTriangle || !libBending || !libSolve ||
         !libSpringForce || !libAttachmentForceAl ||
         !libAttachmentDualUpdate || !libTriMembraneForceAl ||
         !libTriMembraneDualUpdate || !libTriBendingForceAl ||
-        !libTriBendingDualUpdate) return;
+        !libTriBendingDualUpdate || !libSelfCollisionScan) return;
 
     impl_->psoInit             = Impl::makePSO(impl_->device, libInit,       "main_0", "vbd_init");
     impl_->psoGatherSpring     = Impl::makePSO(impl_->device, libSpring,     "main_0", "vbd_gather_spring");
@@ -327,6 +345,7 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     impl_->psoTriangleMembraneDualUpdate  = Impl::makePSO(impl_->device, libTriMembraneDualUpdate,  "main_0", "triangle_membrane_dual_update");
     impl_->psoTriangleBendingForceAl      = Impl::makePSO(impl_->device, libTriBendingForceAl,      "main_0", "triangle_bending_force_al");
     impl_->psoTriangleBendingDualUpdate   = Impl::makePSO(impl_->device, libTriBendingDualUpdate,   "main_0", "triangle_bending_dual_update");
+    impl_->psoSelfCollisionScan           = Impl::makePSO(impl_->device, libSelfCollisionScan,      "main_0", "self_collision_scan");
     if (!impl_->psoInit || !impl_->psoGatherSpring || !impl_->psoGatherAttachment ||
         !impl_->psoGatherTriangle || !impl_->psoGatherBending || !impl_->psoSolveApply ||
         !impl_->psoSpringForce ||
@@ -334,11 +353,12 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
         !impl_->psoTriangleMembraneForceAl ||
         !impl_->psoTriangleMembraneDualUpdate ||
         !impl_->psoTriangleBendingForceAl ||
-        !impl_->psoTriangleBendingDualUpdate) return;
+        !impl_->psoTriangleBendingDualUpdate ||
+        !impl_->psoSelfCollisionScan) return;
 
     impl_->ok = true;
     std::fprintf(stderr,
-        "AvbdSolver: 16 kernels loaded — full AVBD + AL on all 3 constraint types\n");
+        "AvbdSolver: 17 kernels loaded — full AVBD + AL + GPU self-collision\n");
 }
 
 AvbdSolver::~AvbdSolver() { delete impl_; }
@@ -926,6 +946,61 @@ int AvbdSolver::stepDualBending() {
 void AvbdSolver::buildColoring() {
     if (!ok() || !impl_->meshReady) return;
     impl_->buildVertexColoringIfNeeded();
+}
+
+void AvbdSolver::uploadSelfCollisionRadii(const float* radii,
+                                          uint32_t maxNeighborsPerVert) {
+    if (!ok() || !impl_->meshReady) return;
+    const uint32_t nV = impl_->nVerts;
+    const MTLResourceOptions opts = MTLResourceStorageModeShared;
+    impl_->bufRadii =
+        [impl_->device newBufferWithBytes:radii
+                                   length:nV * sizeof(float)
+                                  options:opts];
+    impl_->selfCollK = maxNeighborsPerVert;
+    const NSUInteger bytesNeighbors =
+        NSUInteger(nV) * NSUInteger(maxNeighborsPerVert) * sizeof(uint32_t);
+    impl_->bufNeighbors =
+        [impl_->device newBufferWithLength:bytesNeighbors options:opts];
+    impl_->selfCollReady = true;
+}
+
+int AvbdSolver::detectSelfCollisions(
+        std::vector<std::pair<uint32_t, uint32_t>>& out_pairs) {
+    out_pairs.clear();
+    if (!ok() || !impl_->meshReady || !impl_->selfCollReady) return -1;
+
+    const uint32_t nV = impl_->nVerts;
+    const uint32_t K  = impl_->selfCollK;
+
+    id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:impl_->psoSelfCollisionScan];
+    [enc setBuffer:impl_->bufPositions offset:0 atIndex:0];
+    [enc setBuffer:impl_->bufRadii     offset:0 atIndex:1];
+    [enc setBuffer:impl_->bufNeighbors offset:0 atIndex:2];
+    SelfCollisionScanParams sp{nV, K};
+    [enc setBytes:&sp length:sizeof(sp) atIndex:3];
+    [enc dispatchThreads:MTLSizeMake(nV, 1, 1)
+   threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    [enc endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+
+    // Read pairs from neighbors buffer. Dedupe by (lo, hi) ordering.
+    const uint32_t* neighbors =
+        static_cast<const uint32_t*>(impl_->bufNeighbors.contents);
+    constexpr uint32_t SENTINEL = 0xFFFFFFFFu;
+    out_pairs.reserve(nV);
+    for (uint32_t i = 0; i < nV; ++i) {
+        const uint32_t* row = neighbors + (size_t(i) * K);
+        for (uint32_t k = 0; k < K; ++k) {
+            const uint32_t j = row[k];
+            if (j == SENTINEL) break;
+            if (j > i) out_pairs.emplace_back(i, j);  // skip mirror (j, i)
+        }
+    }
+    return 0;
 }
 
 void AvbdSolver::readPositions(std::vector<float>& positions_out) const {

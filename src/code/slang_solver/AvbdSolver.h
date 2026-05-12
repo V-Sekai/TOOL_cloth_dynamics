@@ -167,6 +167,19 @@ public:
     // identity vertPerm = pre-coloring behavior).
     void buildColoring();
 
+    // Upload per-vertex collision radii and allocate the GPU output
+    // buffer used by detectSelfCollisions(). `radii` is length nVerts.
+    // `maxNeighborsPerVert` (K) caps how many overlapping neighbors are
+    // recorded per vertex; pairs beyond K are dropped (resolved on the
+    // next outer iter). Idempotent — calling again reallocates.
+    void uploadSelfCollisionRadii(const float* radii, uint32_t maxNeighborsPerVert);
+
+    // Dispatch the GPU self-collision scan kernel and return overlapping
+    // vertex pairs (each pair appears once, lower index first). `out_pairs`
+    // is cleared on entry. Must be called after uploadSelfCollisionRadii.
+    // Returns -1 if not set up or radii not uploaded.
+    int detectSelfCollisions(std::vector<std::pair<uint32_t, uint32_t>>& out_pairs);
+
     // Read back current vertex positions to a host array. Used by tests.
     // `positions_out` length = 3 * nVerts (xyz).
     void readPositions(std::vector<float>& positions_out) const;
