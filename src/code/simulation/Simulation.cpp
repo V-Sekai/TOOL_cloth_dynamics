@@ -1245,8 +1245,29 @@ void Simulation::step() {
 		auto _avbd_t1 = std::chrono::steady_clock::now();
 		const long long us =
 		    std::chrono::duration_cast<std::chrono::microseconds>(_avbd_t1 - _avbd_t0).count();
-		std::printf("[avbd-shadow] step %zu  dof=%u  iters=%d  rc=%d  wall=%lld us\n",
-		            forwardRecords.size(), nV * 3u, s_avbdIters, rc, us);
+
+		// Sanity check: read back AVBD's positions and report stats.
+		// |Δx| is displacement from x_n (the current frame's positions
+		// before integration). NaN counter catches blown-up runs early.
+		// Positions are NOT written into Particle.pos — that's a
+		// follow-up PR once velocity tracking + collision are added.
+		std::vector<float> avbdPos;
+		sysMat[0].avbd->readPositions(avbdPos);
+		float dxMax = 0.0f, dxMean = 0.0f;
+		int nanCount = 0;
+		for (uint32_t i = 0; i < nV; ++i) {
+			for (int axis = 0; axis < 3; ++axis) {
+				const float ax = avbdPos[3*i + axis];
+				const float dx = std::fabs(ax - posF[3*i + axis]);
+				if (!std::isfinite(ax)) ++nanCount;
+				if (dx > dxMax) dxMax = dx;
+				dxMean += dx;
+			}
+		}
+		dxMean /= (3.0f * nV);
+		std::printf("[avbd-shadow] step %zu  dof=%u  iters=%d  rc=%d  wall=%lld us  |Δx|_max=%g  |Δx|_mean=%g  nan=%d\n",
+		            forwardRecords.size(), nV * 3u, s_avbdIters, rc, us,
+		            dxMax, dxMean, nanCount);
 	}
 #endif
 	returnRecord.windFactor = windFactor;
