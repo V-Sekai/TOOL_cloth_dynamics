@@ -2543,6 +2543,64 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 		}
 	}
 
+	// CHI-113: wind / external-force cotangent. Chain v_predicted from
+	// `vbd_init_backward` through the predictor formula
+	//   s_n_v = x_v + h·v_v + h²·M_v⁻¹·f_ext_v(·windFallOff_v)
+	// to dL_dfext (Vec3d) and dL_dwind (Vec5d). Matches PD's
+	// stepBackward path for WindConfig::WIND_SIN / WIND_SIN_AND_FALLOFF.
+	if ((taskInfo.dL_dfext || taskInfo.dL_dfwind) &&
+			!g.dL_dpredicted.empty()) {
+		const double h = sceneConfig.timeStep;
+		const double h2 = h * h;
+		VecXd dL_dfext_vec = VecXd::Zero(3 * nV);
+		for (uint32_t v = 0; v < nV; ++v) {
+			const double m = particles[v].mass;
+			const double m_inv = (m > 0.0) ? 1.0 / m : 0.0;
+			const double scale = h2 * m_inv;
+			dL_dfext_vec[3 * v + 0] = scale * g.dL_dpredicted[3 * v + 0];
+			dL_dfext_vec[3 * v + 1] = scale * g.dL_dpredicted[3 * v + 1];
+			dL_dfext_vec[3 * v + 2] = scale * g.dL_dpredicted[3 * v + 2];
+		}
+		const bool useFallOff =
+				sceneConfig.windConfig == WindConfig::WIND_SIN_AND_FALLOFF;
+		if (taskInfo.dL_dfext) {
+			Vec3d delta = Vec3d::Zero();
+			for (uint32_t v = 0; v < nV; ++v) {
+				Vec3d dv = dL_dfext_vec.segment(3 * v, 3);
+				if (useFallOff && windFallOff.size() >= int(3 * (v + 1))) {
+					dv = dv.cwiseProduct(windFallOff.segment(3 * v, 3));
+				}
+				delta += dv;
+			}
+			ret.dL_dfext = delta;
+		}
+		if (taskInfo.dL_dfwind) {
+			// dfext_dwind: 3x5 matrix mapping (force.x, force.y, force.z,
+			// period, phase) → f_ext (per-vertex pre-falloff). Matches
+			// PD's stepBackward formula above.
+			Mat3x5d dfext_dwind;
+			dfext_dwind.setZero();
+			dfext_dwind.block<3, 3>(0, 0) =
+					Mat3x3d::Identity() * forwardInfo_new.windFactor;
+			Vec3d windForce = forwardInfo_new.windParams.segment(0, 3);
+			const double cos_atplusb = std::cos(
+					forwardInfo_new.windParams[3] * forwardInfo_new.t +
+					forwardInfo_new.windParams[4]);
+			dfext_dwind.col(3) =
+					windForce * cos_atplusb * 0.5 * forwardInfo_new.t;
+			dfext_dwind.col(4) = windForce * cos_atplusb * 0.5;
+			Vec3d dL_dfext_total = Vec3d::Zero();
+			for (uint32_t v = 0; v < nV; ++v) {
+				Vec3d dv = dL_dfext_vec.segment(3 * v, 3);
+				if (useFallOff && windFallOff.size() >= int(3 * (v + 1))) {
+					dv = dv.cwiseProduct(windFallOff.segment(3 * v, 3));
+				}
+				dL_dfext_total += dv;
+			}
+			ret.dL_dwind = dfext_dwind.transpose() * dL_dfext_total;
+		}
+	}
+
 	// CHI-14 Brick A1: spline control-point gradient.
 	// Each spline pins one fixed point; this step's ∂L/∂xfixed_pFixed
 	// chains through dxfixed_dcontrolPoints(t) to give the per-spline
@@ -5108,6 +5166,14 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 						}
 					}
 				}
+			}
+			// Accumulate dL_dfext (Vec3d) and dL_dwind (Vec5d) across
+			// steps. Both are written fresh per step by stepBackwardAvbd
+			// via the predictor cotangent chain (CHI-113); sum with the
+			// carryover from later steps in `derivative`.
+			avbdRet.dL_dfext += derivative.dL_dfext;
+			if (avbdRet.dL_dwind.size() == derivative.dL_dwind.size()) {
+				avbdRet.dL_dwind += derivative.dL_dwind;
 			}
 			avbdRet.loss = derivative.loss;
 			// AVBD doesn't compute dL_dv (velocity cotangent); set to

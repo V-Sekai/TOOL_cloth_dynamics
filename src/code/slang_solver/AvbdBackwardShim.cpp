@@ -62,6 +62,20 @@ int avbdBackwardShim(AvbdSolver& solver,
         out.dL_dx[i] = double(dPos[i]);
     }
 
+    // Per-vertex predicted cotangent (CHI-113). Empty if init-backward
+    // hasn't been dispatched — caller falls back to zero dL_dwind /
+    // dL_dfext in that case.
+    std::vector<float> dPred;
+    solver.readPredictedGrad(dPred);
+    if (!dPred.empty()) {
+        out.dL_dpredicted.assign(3 * nVerts, 0.0);
+        for (uint32_t i = 0; i < 3 * nVerts && i < dPred.size(); ++i) {
+            out.dL_dpredicted[i] = double(dPred[i]);
+        }
+    } else {
+        out.dL_dpredicted.clear();
+    }
+
     // Density (per-vertex mass cotangent × area).
     std::vector<float> dMass;
     solver.readMassGrad(dMass);

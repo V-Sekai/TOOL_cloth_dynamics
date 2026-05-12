@@ -1546,6 +1546,15 @@ void AvbdSolver::readMassGrad(std::vector<float>& mass_grad) const {
     std::memcpy(mass_grad.data(), impl_->bufVMass.contents, n * sizeof(float));
 }
 
+void AvbdSolver::readPredictedGrad(std::vector<float>& predicted_grad) const {
+    if (!ok() || !impl_->meshReady || !impl_->backwardReady ||
+        !impl_->bufVPredictedJunk) {
+        predicted_grad.clear();
+        return;
+    }
+    readVec3Padded(predicted_grad, impl_->bufVPredictedJunk, impl_->nVerts);
+}
+
 void AvbdSolver::readSpringGrad(std::vector<float>& restLen_grad,
                                 std::vector<float>& stiff_grad) const {
     if (!ok() || impl_->nSprings == 0 || !impl_->backwardReady) {

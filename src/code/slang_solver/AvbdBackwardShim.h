@@ -51,6 +51,13 @@ struct AvbdParamGradients {
     // packed; length 3·nVerts).
     std::vector<double> dL_dx;
 
+    // Per-vertex ∂L/∂predicted (CHI-113). xyz tight; length 3·nVerts.
+    // Upstream cotangent for wind / external-force inverse design;
+    // chains through the predictor formula `s_n = x + h·v + h²·M⁻¹·f`.
+    // The DiffCloth-side hook (Simulation::stepBackwardAvbd) does the
+    // wind chain using forwardInfo.windFactor / windFallOff / etc.
+    std::vector<double> dL_dpredicted;
+
     // Per-attachment lambda cotangent (xyz tight; length 3·nAttach).
     // AL multiplier state; downstream optimizers can ignore unless
     // fitting the dual ramp directly.
