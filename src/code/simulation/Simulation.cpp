@@ -1942,6 +1942,7 @@ void Simulation::step() {
 		const bool s_avbdNoContact = (std::getenv("AVBD_NO_CONTACT") != nullptr);
 		if (!s_avbdNoContact) {
 			size_t projHits = 0;
+			size_t frictionHits = 0;
 			for (size_t i = 0; i < particles.size(); ++i) {
 				for (Primitive* p : primitives) {
 					if (!p) continue;
@@ -1949,27 +1950,46 @@ void Simulation::step() {
 					if (!p->isInContact(p->center, particles[i].pos,
 					                    particles[i].velocity, normal, dist, v_out))
 						continue;
-					if (dist >= 0.0) continue;  // surface or outside
-					particles[i].pos -= dist * normal;
-					const double vn = particles[i].velocity.dot(normal);
-					if (vn < 0) {
-						particles[i].velocity -= vn * normal;
-						// CHI-112: tangential friction damping. μ ∈ [0,1] —
-						// 0 = perfect slip, 1 = full stick. Approximation
-						// of Coulomb friction: scales tangent velocity by
-						// (1 − μ) instead of clamping to a force cone.
-						// Good enough for sphere demo's inverse design;
-						// gives a non-zero ∂trajectory/∂μ that LBFGS-B can
-						// optimise.
-						if (p->mu > 0.0) {
-							Vec3d v_tan = particles[i].velocity;
-							const double clip = std::min(1.0, p->mu);
-							particles[i].velocity = (1.0 - clip) * v_tan;
-						}
+					const bool penetrating = (dist < 0.0);
+					if (penetrating) {
+						particles[i].pos -= dist * normal;
 					}
-					++projHits;
+					// CHI-112 + CHI-118: contact response on RELATIVE
+					// velocity (cloth − primitive's surface velocity at
+					// contact, including rotation tangent). Single
+					// update that:
+					//   1. Zeros inward normal velocity of cloth (no
+					//      bounce off primitive).
+					//   2. Scales relative tangential velocity by (1 − μ)
+					//      for Coulomb-like friction.
+					// Applied at BOTH penetrating AND resting contacts
+					// (latter dominates the sphere demo — cloth drapes
+					// and stays at `dist ≈ 0`). The old `dist >= 0.0`
+					// skip meant friction never triggered for sphere;
+					// trajectory was invariant to μ.
+					//
+					// `v_out` from isInContact is the primitive's
+					// velocity at the contact point. For the rotating
+					// sphere, this carries the tangential rotation speed
+					// — friction has to act on cloth_velocity − v_out,
+					// not cloth_velocity alone, or the cloth gets pinned
+					// to a stationary surface instead of being carried
+					// by the rotation.
+					const Vec3d v_rel = particles[i].velocity - v_out;
+					const double vn = v_rel.dot(normal);
+					const Vec3d v_tan_rel = v_rel - vn * normal;
+					const double clip = std::min(1.0, std::max(0.0, p->mu));
+					const double vn_after = (vn < 0.0) ? 0.0 : vn;
+					const Vec3d v_rel_after =
+							(1.0 - clip) * v_tan_rel + vn_after * normal;
+					particles[i].velocity = v_rel_after + v_out;
+					if (p->mu > 0.0) ++frictionHits;
+					if (penetrating) ++projHits;
 				}
 			}
+			if (frictionHits > 0)
+				std::printf("[avbd-friction] step %zu applied %zu vert/primitive friction events\n",
+				            forwardRecords.size(), frictionHits);
 			if (projHits > 0)
 				std::printf("[avbd-contact] step %zu projected %zu vert/primitive penetrations\n",
 				            forwardRecords.size(), projHits);
