@@ -43,6 +43,15 @@ int main() {
     std::vector<float>            gamma(GROUP_SIZE, 0.0f);
     std::vector<Vector<float, 3>> lambda0(GROUP_SIZE, Vector<float, 3>(0.0f));
     std::vector<Vector<float, 3>> lambda1(GROUP_SIZE, Vector<float, 3>(0.0f));
+    // M = identity for every triangle so F = P · I = P, keeping the
+    // pre-IUV closest-rotation math bit-exact.
+    std::vector<float>            inv_deltaUV(4 * GROUP_SIZE, 0.0f);
+    for (uint32_t c = 0; c < GROUP_SIZE; ++c) {
+        inv_deltaUV[4*c + 0] = 1.0f; // m00
+        inv_deltaUV[4*c + 1] = 0.0f; // m01
+        inv_deltaUV[4*c + 2] = 0.0f; // m10
+        inv_deltaUV[4*c + 3] = 1.0f; // m11
+    }
 
     for (uint32_t c = 0; c < GROUP_SIZE; ++c) {
         idx[3*c+0] = 0u; idx[3*c+1] = 1u; idx[3*c+2] = 2u;
@@ -53,11 +62,12 @@ int main() {
     lambda1[0] = Vector<float, 3>(-1.0f, -2.0f, -3.0f);
 
     GlobalParams_0 gp{};
-    gp.positions_0.data = positions.data(); gp.positions_0.count = positions.size();
-    gp.idx_0.data       = idx.data();       gp.idx_0.count       = idx.size();
-    gp.gamma_0.data     = gamma.data();     gp.gamma_0.count     = gamma.size();
-    gp.lambda0_0.data   = lambda0.data();   gp.lambda0_0.count   = lambda0.size();
-    gp.lambda1_0.data   = lambda1.data();   gp.lambda1_0.count   = lambda1.size();
+    gp.positions_0.data    = positions.data();   gp.positions_0.count    = positions.size();
+    gp.idx_0.data          = idx.data();         gp.idx_0.count          = idx.size();
+    gp.gamma_0.data        = gamma.data();       gp.gamma_0.count        = gamma.size();
+    gp.lambda0_0.data      = lambda0.data();     gp.lambda0_0.count      = lambda0.size();
+    gp.lambda1_0.data      = lambda1.data();     gp.lambda1_0.count      = lambda1.size();
+    gp.inv_deltaUV_0.data  = inv_deltaUV.data(); gp.inv_deltaUV_0.count  = inv_deltaUV.size();
 
     ComputeVaryingInput vi{};
     vi.startGroupID = uint3(0, 0, 0);
