@@ -208,8 +208,20 @@ MetalCGSolver::MetalCGSolver(const CSRSpMatF& A, const char* metallibPath)
 
     std::string root = metallibPath;
     if (!root.empty() && root.back() != '/') root.push_back('/');
-    id<MTLLibrary> libSpmv  = Impl::loadLib(impl_->device, root + "spmv.metallib",            "spmv");
-    id<MTLLibrary> libSaxI  = Impl::loadLib(impl_->device, root + "saxpby_indirect.metallib", "saxpby_indirect");
+
+    // df32 attacks the fp32 precision floor (PR #38). The Df32 param structs
+    // are bit-identical (single uint field) so only the metallib filenames
+    // change — every other ABI bit stays put.
+    const char* df32Env = std::getenv("USE_DF32_KERNELS");
+    const bool  useDf32 = df32Env && std::atoi(df32Env) != 0;
+    const std::string spmvLib = useDf32 ? "spmv_df32.metallib"            : "spmv.metallib";
+    const std::string saxLib  = useDf32 ? "saxpby_indirect_df32.metallib" : "saxpby_indirect.metallib";
+    if (useDf32) {
+        std::fprintf(stderr, "MetalCGSolver: USE_DF32_KERNELS=1 (spmv_df32 + saxpby_indirect_df32)\n");
+    }
+
+    id<MTLLibrary> libSpmv  = Impl::loadLib(impl_->device, root + spmvLib, "spmv");
+    id<MTLLibrary> libSaxI  = Impl::loadLib(impl_->device, root + saxLib,  "saxpby_indirect");
     id<MTLLibrary> libDot   = Impl::loadLib(impl_->device, root + "dot_reduce.metallib",      "dot_reduce");
     id<MTLLibrary> libAlpha = Impl::loadLib(impl_->device, root + "cg_alpha.metallib",        "cg_alpha");
     id<MTLLibrary> libBeta  = Impl::loadLib(impl_->device, root + "cg_beta.metallib",         "cg_beta");
