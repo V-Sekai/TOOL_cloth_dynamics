@@ -1371,6 +1371,45 @@ void Simulation::step() {
 		            dxMax, dxMean, predMax, driftMax,
 		            driftMaxVert, "xyz"[driftMaxAxis],
 		            convergeMax, convergeMean, nanCount);
+
+		// Outlier topology snapshot. Per-vertex incident-triangle
+		// count + max |inv_deltaUV_ij| across the vertex's incident
+		// triangles. A vertex with very few incident triangles (1-2)
+		// has an ill-conditioned local 3x3 Hessian and is a likely
+		// candidate for being the consistent drift outlier; high
+		// |M| indicates near-degenerate triangle rest shape that
+		// blows up the per-vertex constraint forces. Build the
+		// lookup once and reuse across steps.
+		static bool s_outlierBuilt = false;
+		static std::vector<uint32_t> s_incidentCount;  // tris per vert
+		static std::vector<float>    s_worstM;         // max |M_ij| over incident tris
+		if (!s_outlierBuilt) {
+			s_incidentCount.assign(nV, 0u);
+			s_worstM.assign(nV, 0.0f);
+			for (size_t ti = 0; ti < mesh.size(); ++ti) {
+				const auto &m = mesh[ti].inv_deltaUV;
+				const float wm = std::max({std::abs(float(m(0,0))),
+				                           std::abs(float(m(0,1))),
+				                           std::abs(float(m(1,0))),
+				                           std::abs(float(m(1,1)))});
+				const uint32_t v[3] = {
+					uint32_t(mesh[ti].p0_idx),
+					uint32_t(mesh[ti].p1_idx),
+					uint32_t(mesh[ti].p2_idx)};
+				for (int r = 0; r < 3; ++r) {
+					s_incidentCount[v[r]]++;
+					if (wm > s_worstM[v[r]]) s_worstM[v[r]] = wm;
+				}
+			}
+			s_outlierBuilt = true;
+		}
+		std::printf("[outlier] v%u  inc_tri=%u  worst|M|=%g  pos=(%g,%g,%g)\n",
+		            driftMaxVert,
+		            driftMaxVert < s_incidentCount.size() ? s_incidentCount[driftMaxVert] : 0u,
+		            driftMaxVert < s_worstM.size() ? s_worstM[driftMaxVert] : 0.0f,
+		            float(x_n[3*driftMaxVert+0]),
+		            float(x_n[3*driftMaxVert+1]),
+		            float(x_n[3*driftMaxVert+2]));
 	}
 #endif
 	returnRecord.windFactor = windFactor;
