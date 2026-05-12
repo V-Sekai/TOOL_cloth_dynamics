@@ -109,7 +109,9 @@ source_group("Sources" FILES ${SRCFILES})
 # call sites #ifdef out and DiffCloth's Eigen LLT remains the only
 # solver.
 if (APPLE)
-    set(SLANG_SOLVER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/MetalCGSolver.mm")
+    set(SLANG_SOLVER_SRC
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/MetalCGSolver.mm"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/AvbdSolver.mm")
     set_source_files_properties(${SLANG_SOLVER_SRC}
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     list(APPEND SRCFILES ${SLANG_SOLVER_SRC})
