@@ -115,6 +115,11 @@ if (APPLE)
     set_source_files_properties(${SLANG_SOLVER_SRC}
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     list(APPEND SRCFILES ${SLANG_SOLVER_SRC})
+    # Pure-C++ AVBD backward shim (CHI-14 Brick C). Pulled into the
+    # DiffCloth build so `Simulation::stepBackwardAvbd` (Brick D) can
+    # call it from the optimisation path.
+    list(APPEND SRCFILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/AvbdBackwardShim.cpp")
 endif()
 
 add_executable(${EXECUTABLE_NAME} ${SRCFILES}  )

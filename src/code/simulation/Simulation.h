@@ -616,6 +616,23 @@ public:
 			const ForwardInformation &forwardInfo_new, bool isStart,
 			const VecXd &dL_dxinit, const VecXd &dL_dvinit);
 
+	// CHI-14 Brick D: AVBD-backed single-step adjoint. Wraps
+	// `cloth::avbdBackwardShim` (which calls AvbdSolver::stepBackward
+	// and aggregates the per-constraint cotangents) and lifts the
+	// result into a DiffCloth `BackwardInformation`. Requires that
+	// `sysMat[0].avbd` is set up and that the most recent forward
+	// `step()` was driven by AVBD (so `bufPositionsPreStep` snapshot
+	// holds the per-iter pre-step positions). `dL_dx_new` is the
+	// upstream cotangent on `x_after_step`, length `3 · particles.size()`.
+	// Returns a fresh `BackwardInformation` populated with:
+	//   dL_dx, dL_dk_pertype, dL_ddensity, dL_dxfixed, dL_dxfixed_accum.
+	// Other PD-only fields (`dL_dv`, `dL_dfext`, `dL_dwind`,
+	// `dL_dconstantForceField`, `dL_dmu`, splines) are left at their
+	// default values — AVBD doesn't currently parameterise these.
+	BackwardInformation stepBackwardAvbd(
+			const Simulation::BackwardTaskInformation &taskInfo,
+			const VecXd &dL_dx_new);
+
 	void resetForwardRecordsFromFolder(std::string subFolder) {
 		std::vector<Vec3d> modelPoints;
 		std::vector<Vec3i> modelTris;
