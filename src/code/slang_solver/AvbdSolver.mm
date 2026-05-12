@@ -8,9 +8,16 @@
 #import <Metal/Metal.h>
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace cloth {
+
+// Matches the VbdInitParams struct emitted by Cloth.SlangCodegen.VbdInit
+// (single float field `invHSquared`).
+struct VbdInitParams {
+    float invHSquared;
+};
 
 struct AvbdSolver::Impl {
     id<MTLDevice>               device   = nil;
@@ -25,7 +32,18 @@ struct AvbdSolver::Impl {
     id<MTLComputePipelineState> psoGatherBending    = nil;
     id<MTLComputePipelineState> psoSolveApply       = nil;
 
+    // Per-vertex state buffers (allocated by setupMesh).
+    id<MTLBuffer> bufPositions = nil;   // length = 3 * nVerts (float)
+    id<MTLBuffer> bufPredicted = nil;   // length = 3 * nVerts (float)
+    id<MTLBuffer> bufMass      = nil;   // length = nVerts (float)
+    id<MTLBuffer> bufGScratch  = nil;   // length = 3 * nVerts (float)
+    id<MTLBuffer> bufHScratch  = nil;   // length = 6 * nVerts (float)
+    id<MTLBuffer> bufInitParams = nil;  // sizeof(VbdInitParams)
+
+    uint32_t nVerts = 0;
+
     bool ok = false;
+    bool meshReady = false;
 
     static id<MTLLibrary> loadLib(id<MTLDevice> dev, const std::string& path,
                                    const char* name) {
@@ -98,10 +116,65 @@ AvbdSolver::~AvbdSolver() { delete impl_; }
 
 bool AvbdSolver::ok() const { return impl_ && impl_->ok; }
 
+void AvbdSolver::setupMesh(uint32_t nVerts,
+                           const float* positions,
+                           const float* predicted,
+                           const float* mass,
+                           float invHSquared) {
+    if (!ok()) return;
+    impl_->nVerts = nVerts;
+    const NSUInteger bytesVec3 = 3 * nVerts * sizeof(float);
+    const NSUInteger bytesScalar = nVerts * sizeof(float);
+    const NSUInteger bytesHess = 6 * nVerts * sizeof(float);
+    const MTLResourceOptions opts = MTLResourceStorageModeShared;
+
+    impl_->bufPositions = [impl_->device newBufferWithBytes:positions length:bytesVec3 options:opts];
+    impl_->bufPredicted = [impl_->device newBufferWithBytes:predicted length:bytesVec3 options:opts];
+    impl_->bufMass      = [impl_->device newBufferWithBytes:mass      length:bytesScalar options:opts];
+    impl_->bufGScratch  = [impl_->device newBufferWithLength:bytesVec3 options:opts];
+    impl_->bufHScratch  = [impl_->device newBufferWithLength:bytesHess options:opts];
+
+    impl_->bufInitParams = [impl_->device newBufferWithLength:sizeof(VbdInitParams) options:opts];
+    *static_cast<VbdInitParams*>(impl_->bufInitParams.contents) = {invHSquared};
+
+    impl_->meshReady = true;
+}
+
 int AvbdSolver::step() {
-    // PR-E stub. Real dispatch comes in follow-up PRs.
-    if (!ok()) return -1;
+    if (!ok() || !impl_->meshReady) return -1;
+
+    // PR-E slice 2: dispatch vbd_init only. Gather + solve_apply land
+    // in follow-up PRs once CSR adjacency upload is wired.
+    id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:impl_->psoInit];
+    [enc setBuffer:impl_->bufInitParams offset:0 atIndex:0];
+    [enc setBuffer:impl_->bufPositions  offset:0 atIndex:1];
+    [enc setBuffer:impl_->bufPredicted  offset:0 atIndex:2];
+    [enc setBuffer:impl_->bufMass       offset:0 atIndex:3];
+    [enc setBuffer:impl_->bufGScratch   offset:0 atIndex:4];
+    [enc setBuffer:impl_->bufHScratch   offset:0 atIndex:5];
+    [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
+   threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    [enc endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+
     return 0;
+}
+
+void AvbdSolver::readScratch(std::vector<float>& gScratch_out,
+                             std::vector<float>& hScratch_out) const {
+    if (!ok() || !impl_->meshReady) {
+        gScratch_out.clear();
+        hScratch_out.clear();
+        return;
+    }
+    const uint32_t n = impl_->nVerts;
+    gScratch_out.assign(3 * n, 0.0f);
+    hScratch_out.assign(6 * n, 0.0f);
+    std::memcpy(gScratch_out.data(), impl_->bufGScratch.contents, 3 * n * sizeof(float));
+    std::memcpy(hScratch_out.data(), impl_->bufHScratch.contents, 6 * n * sizeof(float));
 }
 
 }  // namespace cloth

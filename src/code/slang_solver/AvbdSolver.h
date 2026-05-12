@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace cloth {
 
@@ -46,11 +47,30 @@ public:
     // True if construction succeeded and all six kernels are loaded.
     bool ok() const;
 
-    // PR-E stub: one outer AVBD iteration (one pass over all color
-    // batches dispatching vbd_init → gathers → vbd_solve_apply).
-    // Currently a no-op that returns 0 without touching any buffer.
-    // Real implementation lands in PR-E continued.
+    // Upload mesh state. Allocates per-vertex GPU buffers (positions,
+    // predicted, mass, gScratch, hScratch) sized to `nVerts`, uploads
+    // initial state. Subsequent step() calls operate on this buffer
+    // set. Calling setupMesh again resizes/replaces the buffers.
+    //
+    // `positions`, `predicted` are flat float arrays of length 3*nVerts
+    // (xyz triplets); `mass` is length nVerts. `invHSquared = 1/h²`.
+    void setupMesh(uint32_t nVerts,
+                   const float* positions,
+                   const float* predicted,
+                   const float* mass,
+                   float invHSquared);
+
+    // Dispatch the vbd_init kernel: writes inertial term to (gScratch,
+    // hScratch) per vertex. Currently the only kernel dispatched per
+    // step — constraint gathers + solve_apply land in follow-up PRs.
+    // Returns 0 on success, -1 if not ok / not set up.
     int step();
+
+    // Read back current scratch state to host arrays. Used by tests.
+    // `gScratch_out` length 3*nVerts (xyz); `hScratch_out` length 6*nVerts
+    // (packed sym 3x3: [Hxx, Hxy, Hxz, Hyy, Hyz, Hzz] per vertex).
+    void readScratch(std::vector<float>& gScratch_out,
+                     std::vector<float>& hScratch_out) const;
 
 private:
     struct Impl;
