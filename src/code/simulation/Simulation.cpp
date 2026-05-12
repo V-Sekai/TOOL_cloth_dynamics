@@ -1237,6 +1237,12 @@ void Simulation::step() {
 		}
 		auto _avbd_t0 = std::chrono::steady_clock::now();
 		sysMat[0].avbd->updateState(posF.data(), predF.data());
+		// AVBD_AL=1 enables the augmented-Lagrangian dual ramp on
+		// attachments. After each outer iter's step(), dispatch
+		// stepDualAttachments() to nudge λ toward zero constraint
+		// violation. Default off (use the bit-equivalent λ=0 path).
+		static const bool s_avbdAl = (std::getenv("AVBD_AL") != nullptr);
+
 		int rc = 0;
 		// Run the first half of iterations, snapshot positions, then
 		// run the second half. The snapshot lets us measure
@@ -1246,12 +1252,14 @@ void Simulation::step() {
 		for (int it = 0; it < firstHalf; ++it) {
 			rc = sysMat[0].avbd->step();
 			if (rc != 0) break;
+			if (s_avbdAl) sysMat[0].avbd->stepDualAttachments();
 		}
 		std::vector<float> avbdPosHalf;
 		if (rc == 0 && firstHalf > 0)
 			sysMat[0].avbd->readPositions(avbdPosHalf);
 		for (int it = firstHalf; it < s_avbdIters && rc == 0; ++it) {
 			rc = sysMat[0].avbd->step();
+			if (rc == 0 && s_avbdAl) sysMat[0].avbd->stepDualAttachments();
 		}
 		auto _avbd_t1 = std::chrono::steady_clock::now();
 		const long long us =
