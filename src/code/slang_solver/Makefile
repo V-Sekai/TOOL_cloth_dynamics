@@ -19,7 +19,7 @@ INCLUDES   := -I.
 EIGEN_INC := $(REPO_ROOT)/external/eigen
 LBFGSPP_INC := $(REPO_ROOT)/external/LBFGSpp/include
 
-.PHONY: test test-avbd test-inverse-design test-inverse-design-mass clean
+.PHONY: test test-avbd test-inverse-design test-inverse-design-mass test-backward-shim clean
 
 test: $(BUILD)/test_metal_cg_solver
 	@echo "=== Smoke test of the wrapper (no Eigen, no DiffCloth)."
@@ -36,6 +36,10 @@ test-inverse-design: $(BUILD)/test_avbd_inverse_design
 test-inverse-design-mass: $(BUILD)/test_avbd_inverse_design_mass
 	@echo "=== Inverse-design (CHI-14 Brick B): LBFGSpp fits mass via vbd_init_backward."
 	$(BUILD)/test_avbd_inverse_design_mass $(METALLIB_DIR)
+
+test-backward-shim: $(BUILD)/test_avbd_backward_shim
+	@echo "=== AvbdBackwardShim unit test (CHI-14 Brick C)."
+	$(BUILD)/test_avbd_backward_shim $(METALLIB_DIR)
 
 $(BUILD)/test_metal_cg_solver: test_metal_cg_solver.cpp \
                                 $(BUILD)/MetalCGSolver.o
@@ -69,6 +73,18 @@ $(BUILD)/MetalCGSolver.o: MetalCGSolver.mm MetalCGSolver.h
 $(BUILD)/AvbdSolver.o: AvbdSolver.mm AvbdSolver.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -fobjc-arc -c -o $@ AvbdSolver.mm
+
+$(BUILD)/AvbdBackwardShim.o: AvbdBackwardShim.cpp AvbdBackwardShim.h AvbdSolver.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c -o $@ AvbdBackwardShim.cpp
+
+$(BUILD)/test_avbd_backward_shim: test_avbd_backward_shim.cpp \
+                                  $(BUILD)/AvbdSolver.o \
+                                  $(BUILD)/AvbdBackwardShim.o
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) \
+	  -framework Metal -framework Foundation \
+	  -o $@ $^
 
 clean:
 	rm -rf $(BUILD)
