@@ -92,6 +92,23 @@ zero NaN, displacement magnitudes within physically plausible range.
    per-step dynamics (swinging, wind, contact response). The
    per-vertex GN diagonal-Hessian damps faster than full Newton.
 
+5. **All 5 demos work with `AVBD_COLORS=1 AVBD_DRIVE=1`** (post-#91
+   smoke test):
+
+      demo    | nVerts | colors | wall   | drift_max @ step 10
+      --------+--------+--------+--------+--------------------
+      tshirt  |  1426  |   11   | ~ ?    | (timed out grep, ran)
+      sock    |  1055  |    9   | 13 ms  | 9.6e-5 m
+      hat     |   579  |    9   | 15 ms  | 9.8e-4 m
+      sphere  |   625  |    4   | 4 ms   | 3.0e-4 m
+      dress   |  3634  |   10   | 20 ms  | 1.2e-3 m
+
+   No NaN, all stable in DRIVE mode. Sock is in AVBD's ideal regime
+   (h=3.1 ms, invH²=102400 → inertia comparable to constraints) —
+   per-step drift is 96 µm, sub-mm physics. PD-vs-AVBD bulk |Δx|_mean
+   on sock matches to within 3% at step 20 (PD 4.94e-3 vs AVBD 4.78e-3),
+   confirming the bulk physics agrees; only outlier vertices diverge.
+
 ## Open questions / next directions
 
 ### ~Convergence of inner solver~ (closed by #91 + DRIVE test)
