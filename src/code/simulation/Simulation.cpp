@@ -3213,10 +3213,24 @@ void Simulation::initializePrefactoredMatrices() {
 				avbd->uploadSprings(nS, spP1.data(), spP2.data(),
 				                    spL.data(), spK.data());
 
+				// Upload triangle (membrane in-plane stretch) constraints.
+				// DiffCloth's `mesh` vector holds Triangle constraints
+				// with (p0, p1, p2). Stiffness is Triangle::k_stiff
+				// (shared static; per-triangle override is uncommon).
+				const uint32_t nT = uint32_t(mesh.size());
+				std::vector<uint32_t> triIdx(3 * nT);
+				std::vector<float>    triK(nT, float(Triangle::k_stiff));
+				for (uint32_t i = 0; i < nT; ++i) {
+					triIdx[3*i + 0] = uint32_t(mesh[i].p0_idx);
+					triIdx[3*i + 1] = uint32_t(mesh[i].p1_idx);
+					triIdx[3*i + 2] = uint32_t(mesh[i].p2_idx);
+				}
+				avbd->uploadTriangles(nT, triIdx.data(), triK.data());
+
 				sysMat[sysMatId].avbd = avbd;
 				std::printf("[avbd] AvbdSolver loaded + uploaded "
-				            "(nVerts=%u, nSprings=%u, h=%g, invH²=%g)\n",
-				            nV, nS, h, invHSq);
+				            "(nVerts=%u, nSprings=%u, nTri=%u, h=%g, invH²=%g)\n",
+				            nV, nS, nT, h, invHSq);
 			} else {
 				std::fprintf(stderr,
 				             "[avbd] FAILED to construct AvbdSolver; "
