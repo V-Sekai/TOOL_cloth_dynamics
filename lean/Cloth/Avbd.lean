@@ -1,4 +1,5 @@
 import Cloth.Avbd.AdjacencySpring
+import Cloth.Avbd.AdjacencyKwise
 
 /-!
 # `Cloth.Avbd` — AVBD port data structures and precomputes
