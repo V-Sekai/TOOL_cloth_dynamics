@@ -70,11 +70,23 @@ public:
                        const float* restLen,
                        const float* stiffness);
 
-    // Dispatch one full AVBD outer iteration on the spring-only path:
-    //   1. vbd_init           writes inertial term to (gScratch, hScratch)
-    //   2. spring_force       per-spring force + GN Hessian
-    //   3. vbd_gather_spring  per-vertex accumulation via CSR adjacency
-    //   4. vbd_solve_apply    invert 3x3 H, update positions in place
+    // Upload attachment (point-pin) constraints. `nAttach` constraints
+    // pinning vertex `vertIdx[c]` to world anchor `fixedPos[c]` with
+    // stiffness `stiffness[c]`. `fixedPos` is flat float array of length
+    // 3 * nAttach (xyz). Allocates output buffers for attachment_force
+    // (gradV, hessScalar).
+    void uploadAttachments(uint32_t nAttach,
+                           const uint32_t* vertIdx,
+                           const float* fixedPos,
+                           const float* stiffness);
+
+    // Dispatch one full AVBD outer iteration:
+    //   1. vbd_init               inertial term per vertex
+    //   2. spring_force           per-spring force + Hess (if nSprings > 0)
+    //   3. vbd_gather_spring      per-vertex spring CSR gather
+    //   4. attachment_force       per-attachment force + Hess (if nAttach > 0)
+    //   5. vbd_gather_attachment  per-vertex attachment CSR gather
+    //   6. vbd_solve_apply        invert 3x3 H, update positions in place
     //
     // After step() returns, `readPositions(out)` returns the updated
     // vertex positions. Returns 0 on success, -1 if not set up.

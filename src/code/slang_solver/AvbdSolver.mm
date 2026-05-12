@@ -35,8 +35,9 @@ struct AvbdSolver::Impl {
 
     // Per-constraint-type force kernels (compute force/Hess from
     // current positions before the gather kernel scatters them
-    // per-vertex). PR-E loads spring_force first; others follow.
+    // per-vertex).
     id<MTLComputePipelineState> psoSpringForce      = nil;
+    id<MTLComputePipelineState> psoAttachmentForce  = nil;
 
     // Per-vertex state buffers (allocated by setupMesh).
     id<MTLBuffer> bufPositions = nil;   // length = 3 * nVerts (float)
@@ -61,8 +62,21 @@ struct AvbdSolver::Impl {
     id<MTLBuffer> bufVertSpringIdx    = nil; // uint per (2*nSprings)
     id<MTLBuffer> bufVertSpringRole   = nil; // uint per (2*nSprings)
 
+    // Attachment constraint buffers (allocated by uploadAttachments).
+    // Each attachment pins one vertex to a fixed world anchor.
+    id<MTLBuffer> bufAttachVertIdx     = nil; // uint per attachment
+    id<MTLBuffer> bufAttachFixedPos    = nil; // padded float3 per attachment
+    id<MTLBuffer> bufAttachStiffness   = nil; // float per attachment
+    id<MTLBuffer> bufAttachGradV       = nil; // padded float3 per attachment
+    id<MTLBuffer> bufAttachHessScalar  = nil; // float per attachment
+
+    // Vertex → attachment CSR. Role is implicit (always 0 for K=1).
+    id<MTLBuffer> bufVertAttachOffset  = nil; // uint per (nVerts+1)
+    id<MTLBuffer> bufVertAttachIdx     = nil; // uint per nAttach
+
     uint32_t nVerts   = 0;
     uint32_t nSprings = 0;
+    uint32_t nAttach  = 0;
 
     bool ok = false;
     bool meshReady = false;
@@ -118,9 +132,10 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     id<MTLLibrary> libTriangle   = Impl::loadLib(impl_->device, root + "vbd_gather_triangle.metallib",  "vbd_gather_triangle");
     id<MTLLibrary> libBending    = Impl::loadLib(impl_->device, root + "vbd_gather_bending.metallib",   "vbd_gather_bending");
     id<MTLLibrary> libSolve      = Impl::loadLib(impl_->device, root + "vbd_solve_apply.metallib",      "vbd_solve_apply");
-    id<MTLLibrary> libSpringForce = Impl::loadLib(impl_->device, root + "spring_force.metallib",        "spring_force");
+    id<MTLLibrary> libSpringForce     = Impl::loadLib(impl_->device, root + "spring_force.metallib",     "spring_force");
+    id<MTLLibrary> libAttachmentForce = Impl::loadLib(impl_->device, root + "attachment_force.metallib", "attachment_force");
     if (!libInit || !libSpring || !libAttachment || !libTriangle || !libBending || !libSolve ||
-        !libSpringForce) return;
+        !libSpringForce || !libAttachmentForce) return;
 
     impl_->psoInit             = Impl::makePSO(impl_->device, libInit,       "main_0", "vbd_init");
     impl_->psoGatherSpring     = Impl::makePSO(impl_->device, libSpring,     "main_0", "vbd_gather_spring");
@@ -128,14 +143,15 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     impl_->psoGatherTriangle   = Impl::makePSO(impl_->device, libTriangle,   "main_0", "vbd_gather_triangle");
     impl_->psoGatherBending    = Impl::makePSO(impl_->device, libBending,    "main_0", "vbd_gather_bending");
     impl_->psoSolveApply       = Impl::makePSO(impl_->device, libSolve,      "main_0", "vbd_solve_apply");
-    impl_->psoSpringForce      = Impl::makePSO(impl_->device, libSpringForce, "main_0", "spring_force");
+    impl_->psoSpringForce      = Impl::makePSO(impl_->device, libSpringForce,     "main_0", "spring_force");
+    impl_->psoAttachmentForce  = Impl::makePSO(impl_->device, libAttachmentForce, "main_0", "attachment_force");
     if (!impl_->psoInit || !impl_->psoGatherSpring || !impl_->psoGatherAttachment ||
         !impl_->psoGatherTriangle || !impl_->psoGatherBending || !impl_->psoSolveApply ||
-        !impl_->psoSpringForce) return;
+        !impl_->psoSpringForce || !impl_->psoAttachmentForce) return;
 
     impl_->ok = true;
     std::fprintf(stderr,
-        "AvbdSolver: 7 kernels loaded (init, gather_{spring,attachment,triangle,bending}, solve_apply, spring_force)\n");
+        "AvbdSolver: 8 kernels loaded (init, gather_*, solve_apply, spring_force, attachment_force)\n");
 }
 
 AvbdSolver::~AvbdSolver() { delete impl_; }
@@ -253,6 +269,51 @@ void AvbdSolver::uploadSprings(uint32_t nSprings,
                                   options:opts];
 }
 
+void AvbdSolver::uploadAttachments(uint32_t nAttach,
+                                    const uint32_t* vertIdx,
+                                    const float* fixedPos,
+                                    const float* stiffness) {
+    if (!ok()) return;
+    impl_->nAttach = nAttach;
+    const NSUInteger bytesU = nAttach * sizeof(uint32_t);
+    const NSUInteger bytesF = nAttach * sizeof(float);
+    const NSUInteger bytesVec3Padded = 4 * nAttach * sizeof(float);
+    const MTLResourceOptions opts = MTLResourceStorageModeShared;
+
+    impl_->bufAttachVertIdx    = [impl_->device newBufferWithBytes:vertIdx   length:bytesU options:opts];
+    impl_->bufAttachFixedPos   = [impl_->device newBufferWithLength:bytesVec3Padded options:opts];
+    impl_->bufAttachStiffness  = [impl_->device newBufferWithBytes:stiffness length:bytesF options:opts];
+    impl_->bufAttachGradV      = [impl_->device newBufferWithLength:bytesVec3Padded options:opts];
+    impl_->bufAttachHessScalar = [impl_->device newBufferWithLength:bytesF options:opts];
+    uploadVec3Padded(impl_->bufAttachFixedPos, fixedPos, nAttach);
+
+    // Build vertex→attachment CSR. K=1, so each attachment contributes
+    // exactly one entry to vertIdx[c]. No role buffer — implicit 0.
+    const uint32_t nV = impl_->nVerts;
+    std::vector<uint32_t> counts(nV, 0u);
+    for (uint32_t i = 0; i < nAttach; ++i) counts[vertIdx[i]]++;
+    std::vector<uint32_t> offsets(nV + 1, 0u);
+    for (uint32_t v = 0; v < nV; ++v) offsets[v + 1] = offsets[v] + counts[v];
+    const uint32_t totalInc = offsets[nV];
+    std::vector<uint32_t> attachIdx(totalInc, 0u);
+    std::vector<uint32_t> cursor(nV, 0u);
+    for (uint32_t i = 0; i < nAttach; ++i) {
+        const uint32_t v = vertIdx[i];
+        const uint32_t p = offsets[v] + cursor[v];
+        attachIdx[p] = i;
+        cursor[v]++;
+    }
+
+    impl_->bufVertAttachOffset =
+        [impl_->device newBufferWithBytes:offsets.data()
+                                   length:offsets.size() * sizeof(uint32_t)
+                                  options:opts];
+    impl_->bufVertAttachIdx =
+        [impl_->device newBufferWithBytes:attachIdx.data()
+                                   length:attachIdx.size() * sizeof(uint32_t)
+                                  options:opts];
+}
+
 int AvbdSolver::step() {
     if (!ok() || !impl_->meshReady) return -1;
 
@@ -301,7 +362,30 @@ int AvbdSolver::step() {
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     }
 
-    // 4. vbd_solve_apply: invert 3x3 H, write positions += -H⁻¹ g.
+    // 4. attachment_force + vbd_gather_attachment (if nAttach > 0).
+    if (impl_->nAttach > 0) {
+        [enc setComputePipelineState:impl_->psoAttachmentForce];
+        [enc setBuffer:impl_->bufPositions          offset:0 atIndex:0];
+        [enc setBuffer:impl_->bufAttachVertIdx      offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufAttachFixedPos     offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufAttachStiffness    offset:0 atIndex:3];
+        [enc setBuffer:impl_->bufAttachGradV        offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufAttachHessScalar   offset:0 atIndex:5];
+        [enc dispatchThreads:MTLSizeMake(impl_->nAttach, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+
+        [enc setComputePipelineState:impl_->psoGatherAttachment];
+        [enc setBuffer:impl_->bufAttachGradV        offset:0 atIndex:0];
+        [enc setBuffer:impl_->bufAttachHessScalar   offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufVertAttachOffset   offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufVertAttachIdx      offset:0 atIndex:3];
+        [enc setBuffer:impl_->bufGScratch           offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufHScratch           offset:0 atIndex:5];
+        [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    }
+
+    // 5. vbd_solve_apply: invert 3x3 H, write positions += -H⁻¹ g.
     [enc setComputePipelineState:impl_->psoSolveApply];
     [enc setBuffer:impl_->bufGScratch  offset:0 atIndex:0];
     [enc setBuffer:impl_->bufHScratch  offset:0 atIndex:1];
