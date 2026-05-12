@@ -1238,22 +1238,29 @@ void Simulation::step() {
 		auto _avbd_t0 = std::chrono::steady_clock::now();
 		sysMat[0].avbd->updateState(posF.data(), predF.data());
 		int rc = 0;
-		for (int it = 0; it < s_avbdIters; ++it) {
+		// Run the first half of iterations, snapshot positions, then
+		// run the second half. The snapshot lets us measure
+		// "delta-between-halves" — the per-vertex movement still
+		// happening at iter N/2 vs N. Small delta = AVBD has settled.
+		const int firstHalf = s_avbdIters / 2;
+		for (int it = 0; it < firstHalf; ++it) {
 			rc = sysMat[0].avbd->step();
 			if (rc != 0) break;
+		}
+		std::vector<float> avbdPosHalf;
+		if (rc == 0 && firstHalf > 0)
+			sysMat[0].avbd->readPositions(avbdPosHalf);
+		for (int it = firstHalf; it < s_avbdIters && rc == 0; ++it) {
+			rc = sysMat[0].avbd->step();
 		}
 		auto _avbd_t1 = std::chrono::steady_clock::now();
 		const long long us =
 		    std::chrono::duration_cast<std::chrono::microseconds>(_avbd_t1 - _avbd_t0).count();
 
-		// Sanity check: read back AVBD's positions and report stats.
-		// |Δx| is displacement from x_n (the current frame's positions
-		// before integration). NaN counter catches blown-up runs early.
-		// Positions are NOT written into Particle.pos — that's a
-		// follow-up PR once velocity tracking + collision are added.
 		std::vector<float> avbdPos;
 		sysMat[0].avbd->readPositions(avbdPos);
 		float dxMax = 0.0f, dxMean = 0.0f;
+		float convergeMax = 0.0f, convergeMean = 0.0f;
 		int nanCount = 0;
 		for (uint32_t i = 0; i < nV; ++i) {
 			for (int axis = 0; axis < 3; ++axis) {
@@ -1262,12 +1269,23 @@ void Simulation::step() {
 				if (!std::isfinite(ax)) ++nanCount;
 				if (dx > dxMax) dxMax = dx;
 				dxMean += dx;
+				if (!avbdPosHalf.empty()) {
+					const float dconv = std::fabs(ax - avbdPosHalf[3*i + axis]);
+					if (dconv > convergeMax) convergeMax = dconv;
+					convergeMean += dconv;
+				}
 			}
 		}
-		dxMean /= (3.0f * nV);
-		std::printf("[avbd-shadow] step %zu  dof=%u  iters=%d  rc=%d  wall=%lld us  |Δx|_max=%g  |Δx|_mean=%g  nan=%d\n",
+		dxMean       /= (3.0f * nV);
+		convergeMean /= (3.0f * nV);
+		// "converge" is the |Δ| between iter N/2 and iter N. Small
+		// values relative to dxMax mean AVBD has settled — half the
+		// iters would have been enough. Large values mean more iters
+		// needed.
+		std::printf("[avbd-shadow] step %zu  dof=%u  iters=%d  rc=%d  wall=%lld us"
+		            "  |Δx|_max=%g  |Δx|_mean=%g  conv_max=%g  conv_mean=%g  nan=%d\n",
 		            forwardRecords.size(), nV * 3u, s_avbdIters, rc, us,
-		            dxMax, dxMean, nanCount);
+		            dxMax, dxMean, convergeMax, convergeMean, nanCount);
 	}
 #endif
 	returnRecord.windFactor = windFactor;
