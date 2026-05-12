@@ -3227,10 +3227,28 @@ void Simulation::initializePrefactoredMatrices() {
 				}
 				avbd->uploadTriangles(nT, triIdx.data(), triK.data());
 
+				// Upload attachment (point-pin) constraints from this
+				// sysMat's `attachments` vector. Each AttachmentSpring
+				// pins p1_idx to a world-space anchor (fixedPointPos)
+				// with stiffness AttachmentSpring::k_stiff.
+				const uint32_t nA = uint32_t(sysMat[sysMatId].attachments.size());
+				std::vector<uint32_t> atVert(nA);
+				std::vector<float>    atFixed(3 * nA);
+				std::vector<float>    atK(nA, float(AttachmentSpring::k_stiff));
+				for (uint32_t i = 0; i < nA; ++i) {
+					auto &a = sysMat[sysMatId].attachments[i];
+					atVert[i] = uint32_t(a.p1_idx);
+					Vec3d fp = a.fixedPointPos();
+					atFixed[3*i + 0] = float(fp[0]);
+					atFixed[3*i + 1] = float(fp[1]);
+					atFixed[3*i + 2] = float(fp[2]);
+				}
+				avbd->uploadAttachments(nA, atVert.data(), atFixed.data(), atK.data());
+
 				sysMat[sysMatId].avbd = avbd;
 				std::printf("[avbd] AvbdSolver loaded + uploaded "
-				            "(nVerts=%u, nSprings=%u, nTri=%u, h=%g, invH²=%g)\n",
-				            nV, nS, nT, h, invHSq);
+				            "(nVerts=%u, nSprings=%u, nTri=%u, nAttach=%u, h=%g, invH²=%g)\n",
+				            nV, nS, nT, nA, h, invHSq);
 			} else {
 				std::fprintf(stderr,
 				             "[avbd] FAILED to construct AvbdSolver; "
