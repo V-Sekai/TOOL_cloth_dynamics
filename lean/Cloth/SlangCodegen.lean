@@ -17,6 +17,7 @@ import Cloth.SlangCodegen.AttachmentForce
 import Cloth.SlangCodegen.TriangleMembraneForce
 import Cloth.SlangCodegen.TriangleBendingForce
 import Cloth.SlangCodegen.VbdInit
+import Cloth.SlangCodegen.VbdSolveApply
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella
