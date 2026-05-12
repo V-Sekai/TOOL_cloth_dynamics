@@ -1937,44 +1937,92 @@ void Simulation::step() {
 				return std::max(1, std::atoi(e));
 			return 2;
 		}();
+		// Default detection path is the GPU brute-force scan (#104/#105).
+		// AVBD_GPU_SELF=0 falls back to the CPU spatial-hash via
+		// Simulation::collisionDetection() — kept as a safety net during
+		// migration; remove once GPU path is broadly trusted. AVBD's
+		// positions are still on the GPU after the iter loop, so passing
+		// AVBD's solver buffer to detectSelfCollisions() avoids the
+		// readback-then-upload round-trip the CPU path needs anyway.
+		static const bool s_avbdCpuSelf = []() {
+			const char* e = std::getenv("AVBD_GPU_SELF");
+			return e && std::string(e) == "0";
+		}();
 		if (!s_avbdNoSelf && selfcollisionEnabled) {
 			size_t resolvedTotal = 0;
 			long long detectUs = 0, resolveUs = 0;
-			VecXd v_zero = VecXd::Zero(3 * particles.size());
 			for (int pass = 0; pass < s_avbdSelfPasses; ++pass) {
 				auto _t0 = std::chrono::steady_clock::now();
-				VecXd x_now(3 * particles.size());
-				for (size_t i = 0; i < particles.size(); ++i)
-					x_now.segment(3 * i, 3) = particles[i].pos;
-				auto info = collisionDetection(x_now, v_zero,
-				                                xnew_n_primitives, v_n_primitives);
-				auto _t1 = std::chrono::steady_clock::now();
 				size_t passResolved = 0;
-				for (auto& sc : info.first.second) {
-					if (!sc.collides) continue;
-					Particle& a = particles[sc.particleId1];
-					Particle& b = particles[sc.particleId2];
-					const Vec3d posDiff = a.pos - b.pos;
-					const double dist = posDiff.norm();
-					const double thresh = a.radii + b.radii;
-					if (dist < thresh && dist > 1e-10) {
-						const double overlap = thresh - dist;
-						const Vec3d push = (posDiff / dist) * (overlap * 0.5);
-						a.pos += push;
-						b.pos -= push;
-						++passResolved;
+				if (!s_avbdCpuSelf) {
+					// GPU path: reupload current host positions to AVBD's
+					// position buffer (in case AVBD_DRIVE wrote new pos and
+					// CPU has since adjusted via #98 primitive projection),
+					// then dispatch the scan kernel.
+					std::vector<float> posF(3 * particles.size());
+					for (size_t i = 0; i < particles.size(); ++i) {
+						posF[3*i+0] = float(particles[i].pos[0]);
+						posF[3*i+1] = float(particles[i].pos[1]);
+						posF[3*i+2] = float(particles[i].pos[2]);
 					}
+					std::vector<float> predDummy = posF;  // unused by scan
+					sysMat[0].avbd->updateState(posF.data(), predDummy.data());
+					std::vector<std::pair<uint32_t, uint32_t>> pairs;
+					sysMat[0].avbd->detectSelfCollisions(pairs);
+					auto _t1 = std::chrono::steady_clock::now();
+					for (auto& pr : pairs) {
+						Particle& a = particles[pr.first];
+						Particle& b = particles[pr.second];
+						const Vec3d posDiff = a.pos - b.pos;
+						const double dist = posDiff.norm();
+						const double thresh = a.radii + b.radii;
+						if (dist < thresh && dist > 1e-10) {
+							const double overlap = thresh - dist;
+							const Vec3d push = (posDiff / dist) * (overlap * 0.5);
+							a.pos += push;
+							b.pos -= push;
+							++passResolved;
+						}
+					}
+					auto _t2 = std::chrono::steady_clock::now();
+					detectUs += std::chrono::duration_cast<std::chrono::microseconds>(_t1 - _t0).count();
+					resolveUs += std::chrono::duration_cast<std::chrono::microseconds>(_t2 - _t1).count();
+				} else {
+					// CPU spatial-hash fallback.
+					VecXd v_zero = VecXd::Zero(3 * particles.size());
+					VecXd x_now(3 * particles.size());
+					for (size_t i = 0; i < particles.size(); ++i)
+						x_now.segment(3 * i, 3) = particles[i].pos;
+					auto info = collisionDetection(x_now, v_zero,
+					                                xnew_n_primitives, v_n_primitives);
+					auto _t1 = std::chrono::steady_clock::now();
+					for (auto& sc : info.first.second) {
+						if (!sc.collides) continue;
+						Particle& a = particles[sc.particleId1];
+						Particle& b = particles[sc.particleId2];
+						const Vec3d posDiff = a.pos - b.pos;
+						const double dist = posDiff.norm();
+						const double thresh = a.radii + b.radii;
+						if (dist < thresh && dist > 1e-10) {
+							const double overlap = thresh - dist;
+							const Vec3d push = (posDiff / dist) * (overlap * 0.5);
+							a.pos += push;
+							b.pos -= push;
+							++passResolved;
+						}
+					}
+					auto _t2 = std::chrono::steady_clock::now();
+					detectUs += std::chrono::duration_cast<std::chrono::microseconds>(_t1 - _t0).count();
+					resolveUs += std::chrono::duration_cast<std::chrono::microseconds>(_t2 - _t1).count();
 				}
-				auto _t2 = std::chrono::steady_clock::now();
-				detectUs += std::chrono::duration_cast<std::chrono::microseconds>(_t1 - _t0).count();
-				resolveUs += std::chrono::duration_cast<std::chrono::microseconds>(_t2 - _t1).count();
 				resolvedTotal += passResolved;
 				if (passResolved == 0) break;  // settled
 			}
 			if (resolvedTotal > 0)
-				std::printf("[avbd-selfcoll] step %zu resolved %zu  detect=%lld us  resolve=%lld us\n",
+				std::printf("[avbd-selfcoll] step %zu resolved %zu  detect=%lld us  resolve=%lld us  path=%s\n",
 				            forwardRecords.size(), resolvedTotal,
-				            detectUs, resolveUs);
+				            detectUs, resolveUs,
+				            s_avbdCpuSelf ? "cpu" : "gpu");
 		}
 	}
 
@@ -3741,6 +3789,17 @@ void Simulation::initializePrefactoredMatrices() {
 				// pre-coloring block-Jacobi behavior.
 				if (std::getenv("AVBD_COLORS") != nullptr) {
 					avbd->buildColoring();
+				}
+
+				// Upload per-vertex collision radii for the GPU
+				// self-collision scan kernel (#104). The CPU spatial-hash
+				// path (~5 ms / dispatch) stays available for AVBD_NO_SELF=1
+				// fallback or when AVBD_GPU_SELF=0 is set explicitly.
+				{
+					std::vector<float> radF(nV);
+					for (uint32_t i = 0; i < nV; ++i)
+						radF[i] = float(particles[i].radii);
+					avbd->uploadSelfCollisionRadii(radF.data(), 16u);
 				}
 
 				sysMat[sysMatId].avbd = avbd;
