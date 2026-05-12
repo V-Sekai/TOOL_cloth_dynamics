@@ -49,6 +49,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("triangle_bending_dual_update", TriangleBendingDualUpdate.shader)
   , ("triangle_bending_force_al", TriangleBendingForceAl.shader)
   , ("self_collision_scan", SelfCollisionScan.shader)
+  , ("vbd_solve_apply_backward", VbdSolveApplyBackward.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
