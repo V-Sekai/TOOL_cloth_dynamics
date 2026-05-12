@@ -24,7 +24,7 @@ LEAN_DIR   := $(REPO_ROOT)/lean
 
 # Metal kernels we benchmark on real GPU (Tier-3 perf). The full slang →
 # air → metallib pipeline runs once per kernel listed here.
-METAL_KERNELS := spring_project saxpby spmv dot_reduce_serial dot_reduce assemble_b cg_alpha cg_beta saxpby_indirect spmv_df32 saxpby_indirect_df32 spring_force vbd_init vbd_solve_apply vbd_gather_spring vbd_gather_attachment vbd_gather_triangle vbd_gather_bending attachment_force_al attachment_dual_update triangle_membrane_force_al triangle_membrane_dual_update triangle_bending_force_al triangle_bending_dual_update self_collision_scan vbd_solve_apply_backward vbd_init_backward vbd_gather_triangle_backward vbd_gather_attachment_backward vbd_gather_bending_backward vbd_gather_spring_backward attachment_force_al_backward
+METAL_KERNELS := spring_project saxpby spmv dot_reduce_serial dot_reduce assemble_b cg_alpha cg_beta saxpby_indirect spmv_df32 saxpby_indirect_df32 spring_force vbd_init vbd_solve_apply vbd_gather_spring vbd_gather_attachment vbd_gather_triangle vbd_gather_bending attachment_force_al attachment_dual_update triangle_membrane_force_al triangle_membrane_dual_update triangle_bending_force_al triangle_bending_dual_update self_collision_scan vbd_solve_apply_backward vbd_init_backward vbd_gather_triangle_backward vbd_gather_attachment_backward vbd_gather_bending_backward vbd_gather_spring_backward attachment_force_al_backward spring_force_backward triangle_bending_force_al_backward triangle_membrane_force_al_backward
 METALLIBS     := $(addprefix $(EMITTED)/,$(addsuffix .metallib,$(METAL_KERNELS)))
 
 CXX        ?= clang++
@@ -62,7 +62,10 @@ TESTS      := spring_project:spring_project triangle_bending:triangle_bending \
               triangle_membrane_dual_update:triangle_membrane_dual_update \
               triangle_membrane_force_al:triangle_membrane_force_al \
               triangle_bending_dual_update:triangle_bending_dual_update \
-              triangle_bending_force_al:triangle_bending_force_al
+              triangle_bending_force_al:triangle_bending_force_al \
+              spring_force_backward:spring_force_backward \
+              triangle_bending_force_al_backward:triangle_bending_force_al_backward \
+              triangle_membrane_force_al_backward:triangle_membrane_force_al_backward
 
 TEST_NAMES := $(foreach t,$(TESTS),$(word 1,$(subst :, ,$(t))))
 KERNEL_FOR  = $(word 2,$(subst :, ,$(filter $(1):%,$(TESTS))))
@@ -143,6 +146,30 @@ $(EMITTED)/pd_gravity_demo_test: pd_gravity_demo_test.cpp \
                                  $(EMITTED)/spmv_emit.cpp \
                                  $(EMITTED)/saxpby_emit.cpp \
                                  $(EMITTED)/dot_reduce_serial_emit.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
+
+# spring_force_backward FD validator — co-includes the forward and
+# backward emits via the namespace + EXTERN_C-undef trick. Tests that
+# the analytic adjoint matches central-difference gradients on the
+# forward spring-force kernel within 2% relative tolerance.
+$(EMITTED)/spring_force_backward_test: spring_force_backward_test.cpp \
+                                       $(EMITTED)/spring_force_emit.cpp \
+                                       $(EMITTED)/spring_force_backward_emit.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
+
+# triangle_bending_force_al_backward FD validator — same co-include pattern.
+$(EMITTED)/triangle_bending_force_al_backward_test: triangle_bending_force_al_backward_test.cpp \
+                                                    $(EMITTED)/triangle_bending_force_al_emit.cpp \
+                                                    $(EMITTED)/triangle_bending_force_al_backward_emit.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
+
+# triangle_membrane_force_al_backward FD validator — co-include forward + backward.
+# Membrane backward is the frozen-R approximation; FD tolerance is generous
+# (5% on positions, since the Sifakis-cookie cancellation is only exact at
+# converged states — see the kernel header for the math).
+$(EMITTED)/triangle_membrane_force_al_backward_test: triangle_membrane_force_al_backward_test.cpp \
+                                                     $(EMITTED)/triangle_membrane_force_al_emit.cpp \
+                                                     $(EMITTED)/triangle_membrane_force_al_backward_emit.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
 
 # Perf baseline. Times each of the five hottest kernels on a

@@ -36,6 +36,9 @@ import Cloth.SlangCodegen.VbdGatherAttachmentBackward
 import Cloth.SlangCodegen.VbdGatherBendingBackward
 import Cloth.SlangCodegen.VbdGatherSpringBackward
 import Cloth.SlangCodegen.AttachmentForceAlBackward
+import Cloth.SlangCodegen.SpringForceBackward
+import Cloth.SlangCodegen.TriangleBendingForceAlBackward
+import Cloth.SlangCodegen.TriangleMembraneForceAlBackward
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella
