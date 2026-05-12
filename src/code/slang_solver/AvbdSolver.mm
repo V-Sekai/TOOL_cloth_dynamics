@@ -44,6 +44,13 @@ struct VbdSolveApplyParams {
     uint32_t colorOffset;
 };
 
+// Matches the VbdInitBackwardParams struct emitted by
+// Cloth.SlangCodegen.VbdInitBackward (the adjoint of vbd_init's
+// inertial seed; needs invHSquared to scale w = m_v · invHSq).
+struct VbdInitBackwardParams {
+    float invHSquared;
+};
+
 struct AvbdSolver::Impl {
     id<MTLDevice>               device   = nil;
     id<MTLCommandQueue>         queue    = nil;
@@ -204,6 +211,22 @@ struct AvbdSolver::Impl {
     // after — having a dedicated buffer avoids racing with
     // solve_apply_backward which reads bufHScratch.)
     id<MTLBuffer> bufHScratchJunk     = nil; // 6 floats per vert
+
+    // PR-G Brick B (CHI-14): per-vertex cotangents from vbd_init_backward.
+    // The init kernel writes the inertial seed g_v = w·(x_v − y_v),
+    // H_v = w·I where w = m_v · invHSquared, so the inertial path is the
+    // only place where density / mass flows. Outputs:
+    //   v_x_init   — cotangent on x via the init g term (3-vec per vert).
+    //                Added to bufVPositionsGrad on the CPU after dispatch.
+    //   v_y_init   — cotangent on predicted (3-vec per vert). Unused for
+    //                single-step inverse design; allocated as a junk
+    //                write target.
+    //   v_mass     — ∂L/∂m_v (scalar per vert). Read via readMassGrad.
+    id<MTLBuffer> bufVPositionsInit   = nil;
+    id<MTLBuffer> bufVPredictedJunk   = nil;
+    id<MTLBuffer> bufVMass            = nil;
+    // VbdInitBackwardParams { invHSquared }; one float, packed via setBytes.
+    // No buffer needed since setBytes can carry small constant buffers.
 
     // Per-constraint backward cotangents.
     id<MTLBuffer> bufVSpringGradA     = nil; // padded float3 per spring   (input from gather bwd)
@@ -1183,6 +1206,9 @@ void ensureBackwardBuffers_impl(Impl* impl) {
     impl->bufDeltaX         = [impl->device newBufferWithLength:bytesVec3Padded_v options:opts];
     impl->bufVPositionsGrad = [impl->device newBufferWithLength:bytesVec3Padded_v options:opts];
     impl->bufHScratchJunk   = [impl->device newBufferWithLength:bytesHess_v       options:opts];
+    impl->bufVPositionsInit = [impl->device newBufferWithLength:bytesVec3Padded_v options:opts];
+    impl->bufVPredictedJunk = [impl->device newBufferWithLength:bytesVec3Padded_v options:opts];
+    impl->bufVMass          = [impl->device newBufferWithLength:nV * sizeof(float) options:opts];
 
     if (impl->nSprings > 0) {
         const uint32_t n = impl->nSprings;
@@ -1393,6 +1419,26 @@ int AvbdSolver::stepBackward(const float* v_positions_loss) {
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     }
 
+    // ---- 6b. vbd_init_backward — inertial path. Writes per-vertex
+    //          cotangents on positions (v_x_init), predicted (v_y, junk),
+    //          and mass (v_mass). Reads bufVG / bufVH from solve_apply_bwd.
+    //          PR-G Brick B (CHI-14) — density gradient flows only here.
+    if (impl_->psoInitBwd) {
+        [enc setComputePipelineState:impl_->psoInitBwd];
+        [enc setBuffer:impl_->bufPositionsPreStep offset:0 atIndex:0];
+        [enc setBuffer:impl_->bufPredicted        offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufMass             offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufVG               offset:0 atIndex:3];
+        [enc setBuffer:impl_->bufVH               offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufVPositionsInit   offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufVPredictedJunk   offset:0 atIndex:6];
+        [enc setBuffer:impl_->bufVMass            offset:0 atIndex:7];
+        VbdInitBackwardParams ibp{impl_->invHSqCached};
+        [enc setBytes:&ibp length:sizeof(ibp) atIndex:8];
+        [enc dispatchThreads:MTLSizeMake(nV, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    }
+
     // ---- 7. Accumulate per-constraint position cotangents into v_positions
     //         by RE-USING the forward gather kernels. They additively
     //         scatter springGradA / triGrad / bendGrad into the per-vertex
@@ -1460,6 +1506,19 @@ int AvbdSolver::stepBackward(const float* v_positions_loss) {
     [cb commit];
     [cb waitUntilCompleted];
 
+    // PR-G Brick B (CHI-14): add the inertial path's position cotangent
+    // to bufVPositionsGrad. CPU saxpby is fine — nV·3 float adds, fully
+    // bandwidth-bound, dwarfed by the GPU dispatches we just waited on.
+    if (impl_->psoInitBwd) {
+        float* pg       = static_cast<float*>(impl_->bufVPositionsGrad.contents);
+        const float* pi = static_cast<const float*>(impl_->bufVPositionsInit.contents);
+        for (uint32_t v = 0; v < nV; ++v) {
+            pg[4*v + 0] += pi[4*v + 0];
+            pg[4*v + 1] += pi[4*v + 1];
+            pg[4*v + 2] += pi[4*v + 2];
+        }
+    }
+
     return 0;
 }
 
@@ -1469,6 +1528,17 @@ void AvbdSolver::readPositionsGrad(std::vector<float>& out) const {
         return;
     }
     readVec3Padded(out, impl_->bufVPositionsGrad, impl_->nVerts);
+}
+
+void AvbdSolver::readMassGrad(std::vector<float>& mass_grad) const {
+    if (!ok() || !impl_->meshReady || !impl_->backwardReady ||
+        !impl_->bufVMass) {
+        mass_grad.clear();
+        return;
+    }
+    const uint32_t n = impl_->nVerts;
+    mass_grad.assign(n, 0.0f);
+    std::memcpy(mass_grad.data(), impl_->bufVMass.contents, n * sizeof(float));
 }
 
 void AvbdSolver::readSpringGrad(std::vector<float>& restLen_grad,
