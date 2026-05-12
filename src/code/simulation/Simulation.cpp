@@ -1854,6 +1854,39 @@ void Simulation::step() {
 		}
 		std::printf("[avbd-drive] step %zu wrote AVBD output to Particle.pos\n",
 		            forwardRecords.size());
+
+		// AVBD-side cloth-vs-primitive position projection. After
+		// AVBD's positions are committed, push every cloth vertex
+		// outside any primitive (Sphere, Capsule, LowerLeg, Bowl,
+		// Plane, Foot) it penetrated. Generic via Primitive's
+		// virtual `isInContact`: returns signed `dist` (negative =
+		// inside) and outward `normal`; we translate the vertex by
+		// `-dist * normal` to land on the surface and zero the
+		// inward-normal velocity component (sticky / no-bounce).
+		// Default-on when DRIVE is set; AVBD_NO_CONTACT=1 disables.
+		// Self-collision (cloth-cloth) is a follow-up.
+		const bool s_avbdNoContact = (std::getenv("AVBD_NO_CONTACT") != nullptr);
+		if (!s_avbdNoContact) {
+			size_t projHits = 0;
+			for (size_t i = 0; i < particles.size(); ++i) {
+				for (Primitive* p : primitives) {
+					if (!p) continue;
+					Vec3d normal; double dist = 0; Vec3d v_out;
+					if (!p->isInContact(p->center, particles[i].pos,
+					                    particles[i].velocity, normal, dist, v_out))
+						continue;
+					if (dist >= 0.0) continue;  // surface or outside
+					particles[i].pos -= dist * normal;
+					const double vn = particles[i].velocity.dot(normal);
+					if (vn < 0)
+						particles[i].velocity -= vn * normal;
+					++projHits;
+				}
+			}
+			if (projHits > 0)
+				std::printf("[avbd-contact] step %zu projected %zu vert/primitive penetrations\n",
+				            forwardRecords.size(), projHits);
+		}
 	}
 
 	// AVBD_DUMP_STEP=<N> writes /tmp/{avbd,pd}_drape_step_<N>.obj at
