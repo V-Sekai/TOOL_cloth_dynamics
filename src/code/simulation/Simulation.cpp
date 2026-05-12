@@ -1225,15 +1225,34 @@ void Simulation::step() {
 				return std::max(1, std::atoi(e));
 			return 1;
 		}();
+		// AVBD_DAMP scales velocity contribution in the AVBD predictor.
+		// Tests the hypothesis that dress's per-vertex GS oscillation
+		// is kinetic-energy-driven (PR #84 finding). damp < 1.0 bleeds
+		// off velocity before the implicit Euler predictor is built.
+		// Affects ONLY the AVBD shadow path; PD's s_n is untouched.
+		static const float s_avbdDamp = []() {
+			if (const char* e = std::getenv("AVBD_DAMP")) {
+				return float(std::atof(e));
+			}
+			return 1.0f;
+		}();
 		const uint32_t nV = uint32_t(particles.size());
 		std::vector<float> posF(3 * nV), predF(3 * nV);
+		// PD's predictor s_n = x_n + h·v_n + h²·M_inv·f_ext. When
+		// AVBD_DAMP < 1, build an "AVBD-only" predictor with damped
+		// velocity: s_n_avbd = x_n + h·damp·v_n + h²·M_inv·f_ext.
+		// At damp=1.0 this is identical to s_n.
+		const double dampFactor = double(s_avbdDamp);
+		VecXd s_n_avbd = (dampFactor == 1.0) ? s_n
+		    : (x_n + sceneConfig.timeStep * dampFactor * v_n +
+		       sceneConfig.timeStep * sceneConfig.timeStep * M_inv * f_ext);
 		for (uint32_t i = 0; i < nV; ++i) {
 			posF[3*i+0]  = float(x_n[3*i+0]);
 			posF[3*i+1]  = float(x_n[3*i+1]);
 			posF[3*i+2]  = float(x_n[3*i+2]);
-			predF[3*i+0] = float(s_n[3*i+0]);
-			predF[3*i+1] = float(s_n[3*i+1]);
-			predF[3*i+2] = float(s_n[3*i+2]);
+			predF[3*i+0] = float(s_n_avbd[3*i+0]);
+			predF[3*i+1] = float(s_n_avbd[3*i+1]);
+			predF[3*i+2] = float(s_n_avbd[3*i+2]);
 		}
 		auto _avbd_t0 = std::chrono::steady_clock::now();
 		sysMat[0].avbd->updateState(posF.data(), predF.data());
