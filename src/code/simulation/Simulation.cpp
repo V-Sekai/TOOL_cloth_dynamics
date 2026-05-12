@@ -1795,8 +1795,9 @@ void Simulation::step() {
 	// the PD pass computed (potentially inconsistent — that's why
 	// this is opt-in).
 	static const bool s_avbdDrive = (std::getenv("AVBD_DRIVE") != nullptr);
-	if (s_avbdDrive && g_useAvbd && currentSysmatId == 0 &&
-	    sysMat[0].avbd && sysMat[0].avbd->ok()) {
+	const bool s_avbdDriveActive = s_avbdDrive && g_useAvbd && currentSysmatId == 0 &&
+	    sysMat[0].avbd && sysMat[0].avbd->ok();
+	if (s_avbdDriveActive) {
 		std::vector<float> avbdPosFinal;
 		sysMat[0].avbd->readPositions(avbdPosFinal);
 		const double invH = 1.0 / sceneConfig.timeStep;
@@ -1814,6 +1815,32 @@ void Simulation::step() {
 		}
 		std::printf("[avbd-drive] step %zu wrote AVBD output to Particle.pos\n",
 		            forwardRecords.size());
+	}
+
+	// AVBD_DUMP_STEP=<N> writes /tmp/{avbd,pd}_drape_step_<N>.obj at
+	// step N. Naming reflects whether AVBD or PD's output drove that
+	// step — switch by running with and without AVBD_DRIVE=1. Lets you
+	// eyeball the drape in any OBJ viewer (Blender, gltf-viewer, etc.)
+	// to confirm the shape is physically plausible (gravity-aligned,
+	// attached at pinned vertices, no inside-out triangles, geometry
+	// resembling what PD produces).
+	if (const char* dumpStr = std::getenv("AVBD_DUMP_STEP")) {
+		const size_t dumpStep = size_t(std::atoll(dumpStr));
+		if (forwardRecords.size() == dumpStep) {
+			VecXd positions(3 * particles.size());
+			for (size_t i = 0; i < particles.size(); ++i)
+				positions.segment(3 * i, 3) = particles[i].pos;
+			std::vector<Vec3i> triList(mesh.size());
+			for (size_t i = 0; i < mesh.size(); ++i)
+				triList[i] = Vec3i(mesh[i].p0_idx, mesh[i].p1_idx, mesh[i].p2_idx);
+			const std::string label = s_avbdDriveActive ? "avbd" : "pd";
+			const std::string outPath =
+				"/tmp/" + label + "_drape_step_" + std::to_string(dumpStep);
+			MeshFileHandler::saveOBJFile(outPath, positions, triList);
+			std::printf("[drape-dump] wrote %s.obj (%zu verts, %zu tris) — %s path\n",
+			            outPath.c_str(), particles.size(), mesh.size(),
+			            label.c_str());
+		}
 	}
 #endif
 
