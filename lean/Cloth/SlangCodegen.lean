@@ -12,6 +12,7 @@ import Cloth.SlangCodegen.CGBeta
 import Cloth.SlangCodegen.SaxpbyIndirect
 import Cloth.SlangCodegen.SpmvDf32
 import Cloth.SlangCodegen.SaxpbyIndirectDf32
+import Cloth.SlangCodegen.SpringForce
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella
