@@ -60,10 +60,21 @@ public:
                    const float* mass,
                    float invHSquared);
 
-    // Dispatch the vbd_init kernel: writes inertial term to (gScratch,
-    // hScratch) per vertex. Currently the only kernel dispatched per
-    // step — constraint gathers + solve_apply land in follow-up PRs.
-    // Returns 0 on success, -1 if not ok / not set up.
+    // Upload spring constraints. `nSprings` constraints with endpoints
+    // (p1Idx[i], p2Idx[i]) into the per-vertex buffer, rest length
+    // `restLen[i]`, stiffness `stiffness[i]`. Allocates output buffers
+    // for spring_force (gradA, hess).
+    void uploadSprings(uint32_t nSprings,
+                       const uint32_t* p1Idx,
+                       const uint32_t* p2Idx,
+                       const float* restLen,
+                       const float* stiffness);
+
+    // Dispatch one AVBD outer iteration. Currently runs:
+    //   1. vbd_init      — writes inertial term to (gScratch, hScratch)
+    //   2. spring_force  — per-spring force + GN Hessian into output buffers
+    // Gather + solve_apply land in follow-up PRs. Returns 0 on success,
+    // -1 if not set up.
     int step();
 
     // Read back current scratch state to host arrays. Used by tests.
@@ -71,6 +82,12 @@ public:
     // (packed sym 3x3: [Hxx, Hxy, Hxz, Hyy, Hyz, Hzz] per vertex).
     void readScratch(std::vector<float>& gScratch_out,
                      std::vector<float>& hScratch_out) const;
+
+    // Read back spring_force outputs. `gradA_out` length 3*nSprings
+    // (xyz); `hess_out` length 6*nSprings (packed sym 3x3 per spring).
+    // Used by tests.
+    void readSpringForce(std::vector<float>& gradA_out,
+                         std::vector<float>& hess_out) const;
 
 private:
     struct Impl;

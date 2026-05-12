@@ -32,6 +32,11 @@ struct AvbdSolver::Impl {
     id<MTLComputePipelineState> psoGatherBending    = nil;
     id<MTLComputePipelineState> psoSolveApply       = nil;
 
+    // Per-constraint-type force kernels (compute force/Hess from
+    // current positions before the gather kernel scatters them
+    // per-vertex). PR-E loads spring_force first; others follow.
+    id<MTLComputePipelineState> psoSpringForce      = nil;
+
     // Per-vertex state buffers (allocated by setupMesh).
     id<MTLBuffer> bufPositions = nil;   // length = 3 * nVerts (float)
     id<MTLBuffer> bufPredicted = nil;   // length = 3 * nVerts (float)
@@ -40,7 +45,16 @@ struct AvbdSolver::Impl {
     id<MTLBuffer> bufHScratch  = nil;   // length = 6 * nVerts (float)
     id<MTLBuffer> bufInitParams = nil;  // sizeof(VbdInitParams)
 
-    uint32_t nVerts = 0;
+    // Spring constraint buffers (allocated by uploadSprings).
+    id<MTLBuffer> bufSpringP1Idx     = nil;  // uint per spring
+    id<MTLBuffer> bufSpringP2Idx     = nil;  // uint per spring
+    id<MTLBuffer> bufSpringRestLen   = nil;  // float per spring
+    id<MTLBuffer> bufSpringStiffness = nil;  // float per spring
+    id<MTLBuffer> bufSpringGradA     = nil;  // 3 floats per spring
+    id<MTLBuffer> bufSpringHess      = nil;  // 6 floats per spring
+
+    uint32_t nVerts   = 0;
+    uint32_t nSprings = 0;
 
     bool ok = false;
     bool meshReady = false;
@@ -96,7 +110,9 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     id<MTLLibrary> libTriangle   = Impl::loadLib(impl_->device, root + "vbd_gather_triangle.metallib",  "vbd_gather_triangle");
     id<MTLLibrary> libBending    = Impl::loadLib(impl_->device, root + "vbd_gather_bending.metallib",   "vbd_gather_bending");
     id<MTLLibrary> libSolve      = Impl::loadLib(impl_->device, root + "vbd_solve_apply.metallib",      "vbd_solve_apply");
-    if (!libInit || !libSpring || !libAttachment || !libTriangle || !libBending || !libSolve) return;
+    id<MTLLibrary> libSpringForce = Impl::loadLib(impl_->device, root + "spring_force.metallib",        "spring_force");
+    if (!libInit || !libSpring || !libAttachment || !libTriangle || !libBending || !libSolve ||
+        !libSpringForce) return;
 
     impl_->psoInit             = Impl::makePSO(impl_->device, libInit,       "main_0", "vbd_init");
     impl_->psoGatherSpring     = Impl::makePSO(impl_->device, libSpring,     "main_0", "vbd_gather_spring");
@@ -104,12 +120,14 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     impl_->psoGatherTriangle   = Impl::makePSO(impl_->device, libTriangle,   "main_0", "vbd_gather_triangle");
     impl_->psoGatherBending    = Impl::makePSO(impl_->device, libBending,    "main_0", "vbd_gather_bending");
     impl_->psoSolveApply       = Impl::makePSO(impl_->device, libSolve,      "main_0", "vbd_solve_apply");
+    impl_->psoSpringForce      = Impl::makePSO(impl_->device, libSpringForce, "main_0", "spring_force");
     if (!impl_->psoInit || !impl_->psoGatherSpring || !impl_->psoGatherAttachment ||
-        !impl_->psoGatherTriangle || !impl_->psoGatherBending || !impl_->psoSolveApply) return;
+        !impl_->psoGatherTriangle || !impl_->psoGatherBending || !impl_->psoSolveApply ||
+        !impl_->psoSpringForce) return;
 
     impl_->ok = true;
     std::fprintf(stderr,
-        "AvbdSolver: all 6 AVBD kernels loaded (init, gather_{spring,attachment,triangle,bending}, solve_apply)\n");
+        "AvbdSolver: 7 kernels loaded (init, gather_{spring,attachment,triangle,bending}, solve_apply, spring_force)\n");
 }
 
 AvbdSolver::~AvbdSolver() { delete impl_; }
@@ -140,13 +158,37 @@ void AvbdSolver::setupMesh(uint32_t nVerts,
     impl_->meshReady = true;
 }
 
+void AvbdSolver::uploadSprings(uint32_t nSprings,
+                                const uint32_t* p1Idx,
+                                const uint32_t* p2Idx,
+                                const float* restLen,
+                                const float* stiffness) {
+    if (!ok()) return;
+    impl_->nSprings = nSprings;
+    const NSUInteger bytesU = nSprings * sizeof(uint32_t);
+    const NSUInteger bytesF = nSprings * sizeof(float);
+    const NSUInteger bytesGrad = 3 * nSprings * sizeof(float);
+    const NSUInteger bytesHess = 6 * nSprings * sizeof(float);
+    const MTLResourceOptions opts = MTLResourceStorageModeShared;
+
+    impl_->bufSpringP1Idx     = [impl_->device newBufferWithBytes:p1Idx     length:bytesU options:opts];
+    impl_->bufSpringP2Idx     = [impl_->device newBufferWithBytes:p2Idx     length:bytesU options:opts];
+    impl_->bufSpringRestLen   = [impl_->device newBufferWithBytes:restLen   length:bytesF options:opts];
+    impl_->bufSpringStiffness = [impl_->device newBufferWithBytes:stiffness length:bytesF options:opts];
+    impl_->bufSpringGradA     = [impl_->device newBufferWithLength:bytesGrad options:opts];
+    impl_->bufSpringHess      = [impl_->device newBufferWithLength:bytesHess options:opts];
+}
+
 int AvbdSolver::step() {
     if (!ok() || !impl_->meshReady) return -1;
 
-    // PR-E slice 2: dispatch vbd_init only. Gather + solve_apply land
-    // in follow-up PRs once CSR adjacency upload is wired.
+    // PR-E slice 3: vbd_init + spring_force in one command buffer.
+    // Gather + solve_apply land in follow-up PRs once CSR adjacency
+    // is wired into the dispatch.
     id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+
+    // 1. vbd_init: inertial term per vertex.
     [enc setComputePipelineState:impl_->psoInit];
     [enc setBuffer:impl_->bufInitParams offset:0 atIndex:0];
     [enc setBuffer:impl_->bufPositions  offset:0 atIndex:1];
@@ -156,6 +198,21 @@ int AvbdSolver::step() {
     [enc setBuffer:impl_->bufHScratch   offset:0 atIndex:5];
     [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
    threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+
+    // 2. spring_force: per-spring force + GN Hessian into gradA/hess.
+    if (impl_->nSprings > 0) {
+        [enc setComputePipelineState:impl_->psoSpringForce];
+        [enc setBuffer:impl_->bufPositions       offset:0 atIndex:0];
+        [enc setBuffer:impl_->bufSpringP1Idx     offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufSpringP2Idx     offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufSpringRestLen   offset:0 atIndex:3];
+        [enc setBuffer:impl_->bufSpringStiffness offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufSpringGradA     offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufSpringHess      offset:0 atIndex:6];
+        [enc dispatchThreads:MTLSizeMake(impl_->nSprings, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    }
+
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
@@ -175,6 +232,20 @@ void AvbdSolver::readScratch(std::vector<float>& gScratch_out,
     hScratch_out.assign(6 * n, 0.0f);
     std::memcpy(gScratch_out.data(), impl_->bufGScratch.contents, 3 * n * sizeof(float));
     std::memcpy(hScratch_out.data(), impl_->bufHScratch.contents, 6 * n * sizeof(float));
+}
+
+void AvbdSolver::readSpringForce(std::vector<float>& gradA_out,
+                                  std::vector<float>& hess_out) const {
+    if (!ok() || impl_->nSprings == 0) {
+        gradA_out.clear();
+        hess_out.clear();
+        return;
+    }
+    const uint32_t n = impl_->nSprings;
+    gradA_out.assign(3 * n, 0.0f);
+    hess_out.assign(6 * n, 0.0f);
+    std::memcpy(gradA_out.data(), impl_->bufSpringGradA.contents, 3 * n * sizeof(float));
+    std::memcpy(hess_out.data(),  impl_->bufSpringHess.contents,  6 * n * sizeof(float));
 }
 
 }  // namespace cloth
