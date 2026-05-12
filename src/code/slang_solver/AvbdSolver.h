@@ -80,13 +80,22 @@ public:
                            const float* fixedPos,
                            const float* stiffness);
 
+    // Upload triangle membrane (in-plane stretch) constraints.
+    // `nTri` triangles with corner vertex indices `triIdx` (length
+    // 3*nTri, interleaved (i0,i1,i2) per triangle) and stiffness
+    // `stiffness[c]`. Allocates output buffers for
+    // triangle_membrane_force (grad, hessScalar at slot 3*c+r).
+    void uploadTriangles(uint32_t nTri,
+                         const uint32_t* triIdx,
+                         const float* stiffness);
+
     // Dispatch one full AVBD outer iteration:
-    //   1. vbd_init               inertial term per vertex
-    //   2. spring_force           per-spring force + Hess (if nSprings > 0)
-    //   3. vbd_gather_spring      per-vertex spring CSR gather
-    //   4. attachment_force       per-attachment force + Hess (if nAttach > 0)
-    //   5. vbd_gather_attachment  per-vertex attachment CSR gather
-    //   6. vbd_solve_apply        invert 3x3 H, update positions in place
+    //   1. vbd_init                   inertial term per vertex
+    //   2. spring_force + gather      (if nSprings > 0)
+    //   3. attachment_force + gather  (if nAttach > 0)
+    //   4. triangle_membrane_force
+    //        + vbd_gather_triangle    (if nTri > 0)
+    //   5. vbd_solve_apply            invert 3x3 H, update positions
     //
     // After step() returns, `readPositions(out)` returns the updated
     // vertex positions. Returns 0 on success, -1 if not set up.
