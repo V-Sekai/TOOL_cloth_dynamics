@@ -12,7 +12,7 @@
 //
 // AVBD is one algorithm covering cloth, attachment, triangle membrane,
 // and dihedral bending in a single per-vertex block update. See
-// todo.md for the full roadmap.
+// Linear CHI-99 (AVBD port — status & roadmap) for the full picture.
 //
 // Lifecycle:
 //   - Construct once per simulation scene (loads metallibs, builds PSOs).
