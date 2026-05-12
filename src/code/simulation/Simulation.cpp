@@ -1814,6 +1814,38 @@ void Simulation::step() {
 		}
 		std::printf("[avbd-drive] step %zu wrote AVBD output to Particle.pos\n",
 		            forwardRecords.size());
+
+		// AVBD-side cloth-vs-sphere position projection. After AVBD's
+		// converged positions are committed, push every cloth vertex
+		// outside any sphere primitive whose interior it landed in.
+		// Inward-normal velocity component is zeroed (sticky / no-bounce
+		// contact). Default-on when DRIVE is set; AVBD_NO_CONTACT=1
+		// disables for ablation. Lets hat/sphere/big-sphere demos run
+		// AVBD-only without PD's contact handling. Self-collision and
+		// capsule/plane/bowl projection are follow-ups.
+		const bool s_avbdNoContact = (std::getenv("AVBD_NO_CONTACT") != nullptr);
+		if (!s_avbdNoContact) {
+			size_t projHits = 0;
+			for (size_t i = 0; i < particles.size(); ++i) {
+				for (Primitive* p : primitives) {
+					Sphere* sp = dynamic_cast<Sphere*>(p);
+					if (!sp) continue;
+					const Vec3d delta = particles[i].pos - sp->center;
+					const double dist = delta.norm();
+					if (dist < sp->radius && dist > 1e-10) {
+						const Vec3d normal = delta / dist;
+						particles[i].pos = sp->center + normal * sp->radius;
+						const double vn = particles[i].velocity.dot(normal);
+						if (vn < 0)
+							particles[i].velocity -= vn * normal;
+						++projHits;
+					}
+				}
+			}
+			if (projHits > 0)
+				std::printf("[avbd-contact] step %zu projected %zu verts out of sphere primitives\n",
+				            forwardRecords.size(), projHits);
+		}
 	}
 #endif
 
