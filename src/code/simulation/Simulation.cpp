@@ -4875,6 +4875,20 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 				forwardRecords.size()); // FORWARD_STEPS = forwardRecords.size()) - 1
 	}
 
+	// CHI-14 Brick E: env-gate to swap PD adjoint for AVBD adjoint.
+	// USE_AVBD_BWD=1 routes per-step gradient through
+	// `stepBackwardAvbd` (Brick D) instead of `stepBackward`. Param
+	// gradients are accumulated across steps host-side here since the
+	// AVBD shim is stateless (does not take a `gradient_new`
+	// accumulator like the PD path does). Requires that the forward
+	// was driven by AVBD (`sysMat[0].avbd` set up).
+	const bool useAvbdBwd = (std::getenv("USE_AVBD_BWD") != nullptr) &&
+			!sysMat.empty() && sysMat[0].avbd && sysMat[0].avbd->ok();
+	if (useAvbdBwd) {
+		std::printf("[avbd-bwd] USE_AVBD_BWD=1 — routing backward through "
+					"Simulation::stepBackwardAvbd\n");
+	}
+
 	std::printf("backward started...");
 	for (int idx = FORWARD_STEPS; idx >= 1; idx--) {
 		if (idx % 50 == 0) {
@@ -4889,9 +4903,33 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 
 		calculateLossAndGradient(lossType, lossInfo, dL_dxinit, dL_dvinit, idx - 1,
 				false);
-		// backward from [x,v]_{idx} --> [x,v]_{idx-1}, calculate dL/dx_{idx-1}
-		derivative = stepBackward(taskConfiguration, derivative, record,
-				(idx - 1) == 0, dL_dxinit, dL_dvinit);
+
+		if (useAvbdBwd) {
+			// Upstream cotangent for this step = accumulated dL/dx
+			// from later steps + any per-step loss-grad contribution.
+			VecXd dL_dx_in = derivative.dL_dx + dL_dxinit;
+			BackwardInformation avbdRet =
+					stepBackwardAvbd(taskConfiguration, dL_dx_in);
+			// Accumulate per-type stiffness, density, anchor cotangents.
+			for (int t = 0; t < Constraint::CONSTRAINT_NUM && t < 4; ++t) {
+				avbdRet.dL_dk_pertype[t] += derivative.dL_dk_pertype[t];
+			}
+			avbdRet.dL_ddensity += derivative.dL_ddensity;
+			if (avbdRet.dL_dxfixed_accum.rows() ==
+					derivative.dL_dxfixed_accum.rows()) {
+				avbdRet.dL_dxfixed_accum =
+						avbdRet.dL_dxfixed + derivative.dL_dxfixed_accum;
+			}
+			avbdRet.loss = derivative.loss;
+			// AVBD doesn't compute dL_dv (velocity cotangent); set to
+			// zero so downstream consumers see a defined value.
+			avbdRet.dL_dv = VecXd::Zero(3 * particles.size());
+			derivative = avbdRet;
+		} else {
+			// backward from [x,v]_{idx} --> [x,v]_{idx-1}, calculate dL/dx_{idx-1}
+			derivative = stepBackward(taskConfiguration, derivative, record,
+					(idx - 1) == 0, dL_dxinit, dL_dvinit);
+		}
 		fullBackwardRecords.emplace_back(derivative);
 	}
 	std::printf("finished...\n");
