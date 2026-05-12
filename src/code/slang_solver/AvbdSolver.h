@@ -252,6 +252,12 @@ public:
     // forward, so this is the full density / mass gradient. Vector of
     // length `nVerts`. Empty if backward not run.
     void readMassGrad(std::vector<float>& mass_grad) const;
+    // Per-vertex ∂L/∂predicted — emitted by `vbd_init_backward` (CHI-113).
+    // The predictor `s_n = x_prev + h·v_prev + h²·M⁻¹·f_ext` is the only
+    // place f_ext / wind force flow through the AVBD forward, so this
+    // is the upstream cotangent for wind / external-force inverse
+    // design. Layout: xyz tightly packed; length `3*nVerts`.
+    void readPredictedGrad(std::vector<float>& predicted_grad) const;
     void readSpringGrad(std::vector<float>& restLen_grad,
                         std::vector<float>& stiff_grad) const;
     void readAttachGrad(std::vector<float>& fixedPos_grad,
