@@ -27,6 +27,7 @@ import Cloth.SlangCodegen.AttachmentForceAl
 import Cloth.SlangCodegen.TriangleMembraneDualUpdate
 import Cloth.SlangCodegen.TriangleMembraneForceAl
 import Cloth.SlangCodegen.TriangleBendingDualUpdate
+import Cloth.SlangCodegen.TriangleBendingForceAl
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella

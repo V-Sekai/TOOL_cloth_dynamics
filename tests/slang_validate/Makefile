@@ -61,7 +61,8 @@ TESTS      := spring_project:spring_project triangle_bending:triangle_bending \
               attachment_force_al:attachment_force_al \
               triangle_membrane_dual_update:triangle_membrane_dual_update \
               triangle_membrane_force_al:triangle_membrane_force_al \
-              triangle_bending_dual_update:triangle_bending_dual_update
+              triangle_bending_dual_update:triangle_bending_dual_update \
+              triangle_bending_force_al:triangle_bending_force_al
 
 TEST_NAMES := $(foreach t,$(TESTS),$(word 1,$(subst :, ,$(t))))
 KERNEL_FOR  = $(word 2,$(subst :, ,$(filter $(1):%,$(TESTS))))
