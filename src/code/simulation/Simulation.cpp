@@ -1258,6 +1258,89 @@ void Simulation::step() {
 		VecXd s_n_avbd = (dampFactor == 1.0) ? s_n
 		    : (x_n + sceneConfig.timeStep * dampFactor * v_n +
 		       sceneConfig.timeStep * sceneConfig.timeStep * M_inv * f_ext);
+
+		// CHI-119: friction-as-predictor-blend, TANGENT-ONLY projection.
+		// Per AVBD's penalty formulation: friction is a per-vertex
+		// constraint with energy E = (1/2)·k_fric·||(I−n·nᵀ)·(x−x_pre)||².
+		// The corresponding predictor adjustment is to blend the
+		// predicted motion `Δs = s_n − x_n` along the TANGENT only,
+		// leaving the normal component free so the cloth can press
+		// into the surface naturally:
+		//
+		//   Δs_n = (Δs · n)·n
+		//   Δs_t = Δs − Δs_n
+		//   s_n_new = x_n + Δs_n + (1 − μ)·Δs_t
+		//
+		// μ=0 → predictor unchanged. μ=1 → tangent motion frozen
+		// (vertex can only move along the normal). The AVBD solve
+		// then balances gravity + internal forces against this
+		// per-vertex friction constraint; final position depends on μ.
+		//
+		// Contact list comes from the PREVIOUS step's PD collisionInfos
+		// (triangle-based, much more inclusive than per-vertex
+		// isInContact — which found only 1 contact/step on the sphere
+		// demo). On the first step there's no history; we fall back to
+		// vertex-based isInContact for that step alone.
+		//
+		// Disable via AVBD_NO_FRICTION_PRED=1.
+		const bool s_avbdNoFricPred =
+				(std::getenv("AVBD_NO_FRICTION_PRED") != nullptr);
+		const bool s_avbdNoContact_local =
+				(std::getenv("AVBD_NO_CONTACT") != nullptr);
+		if (!s_avbdNoContact_local && !s_avbdNoFricPred) {
+			auto applyFriction = [&](size_t i, const Vec3d &nrm,
+									 const Primitive *p) {
+				if (p->mu <= 0.0) return;
+				const double mu_clip =
+						std::min(1.0, std::max(0.0, p->mu));
+				const Eigen::Index b = 3 * static_cast<Eigen::Index>(i);
+				Vec3d ds(s_n_avbd[b + 0] - x_n[b + 0],
+						 s_n_avbd[b + 1] - x_n[b + 1],
+						 s_n_avbd[b + 2] - x_n[b + 2]);
+				const double dsn = ds.dot(nrm);
+				const Vec3d ds_n = dsn * nrm;
+				const Vec3d ds_t = ds - ds_n;
+				const Vec3d ds_new = ds_n + (1.0 - mu_clip) * ds_t;
+				s_n_avbd[b + 0] = x_n[b + 0] + ds_new[0];
+				s_n_avbd[b + 1] = x_n[b + 1] + ds_new[1];
+				s_n_avbd[b + 2] = x_n[b + 2] + ds_new[2];
+			};
+			size_t fricBlends = 0;
+			if (!forwardRecords.empty() &&
+					!forwardRecords.back().collisionInfos.first.first.empty()) {
+				// Use PD's triangle-based contact list from prev step.
+				for (const auto &info :
+						forwardRecords.back().collisionInfos.first.first) {
+					if (!info.collides) continue;
+					if (info.primitiveId < 0 ||
+							info.primitiveId >= int(primitives.size()))
+						continue;
+					const Primitive *p = primitives[info.primitiveId];
+					if (!p) continue;
+					applyFriction(size_t(info.particleId), info.normal, p);
+					++fricBlends;
+				}
+			} else {
+				// Bootstrap (first step / no history): per-vertex test.
+				for (size_t i = 0; i < particles.size(); ++i) {
+					for (Primitive *p : primitives) {
+						if (!p) continue;
+						Vec3d nrm; double dist = 0; Vec3d v_out;
+						if (!p->isInContact(p->center, particles[i].pos,
+											particles[i].velocity, nrm,
+											dist, v_out))
+							continue;
+						applyFriction(i, nrm, p);
+						++fricBlends;
+					}
+				}
+			}
+			if (fricBlends > 0 && std::getenv("AVBD_FRIC_PRED_DEBUG")) {
+				std::printf("[avbd-fric-pred] step %zu blended %zu tangent predictors\n",
+				            forwardRecords.size(), fricBlends);
+			}
+		}
+
 		for (uint32_t i = 0; i < nV; ++i) {
 			posF[3*i+0]  = float(x_n[3*i+0]);
 			posF[3*i+1]  = float(x_n[3*i+1]);
