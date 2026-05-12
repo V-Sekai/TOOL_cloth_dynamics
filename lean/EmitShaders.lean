@@ -51,6 +51,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("self_collision_scan", SelfCollisionScan.shader)
   , ("vbd_solve_apply_backward", VbdSolveApplyBackward.shader)
   , ("vbd_init_backward", VbdInitBackward.shader)
+  , ("vbd_gather_triangle_backward", VbdGatherTriangleBackward.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
