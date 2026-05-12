@@ -1,4 +1,5 @@
 import Cloth.SlangCodegen
+import Cloth.Avbd
 
 /-!
 # `Cloth` — DiffCloth → Slang compute-shader codegen umbrella
