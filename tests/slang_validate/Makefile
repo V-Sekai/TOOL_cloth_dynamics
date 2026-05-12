@@ -54,7 +54,8 @@ TESTS      := spring_project:spring_project triangle_bending:triangle_bending \
               vbd_init:vbd_init \
               vbd_solve_apply:vbd_solve_apply \
               vbd_gather_spring:vbd_gather_spring \
-              vbd_gather_attachment:vbd_gather_attachment
+              vbd_gather_attachment:vbd_gather_attachment \
+              vbd_gather_triangle:vbd_gather_triangle
 
 TEST_NAMES := $(foreach t,$(TESTS),$(word 1,$(subst :, ,$(t))))
 KERNEL_FOR  = $(word 2,$(subst :, ,$(filter $(1):%,$(TESTS))))
