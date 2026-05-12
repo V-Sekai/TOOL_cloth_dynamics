@@ -3245,10 +3245,34 @@ void Simulation::initializePrefactoredMatrices() {
 				}
 				avbd->uploadAttachments(nA, atVert.data(), atFixed.data(), atK.data());
 
+				// Upload dihedral bending constraints from
+				// DiffCloth's `bendingConstraints` vector. Each
+				// TriangleBending has a 4-vertex stencil (p0..p3)
+				// with cotangent Laplacian weights (Vec4d weightVert)
+				// and rest magnitude `n`. Stiffness uses
+				// TriangleBending::k_stiff.
+				const uint32_t nB = uint32_t(bendingConstraints.size());
+				std::vector<uint32_t> bendIdx(4 * nB);
+				std::vector<float>    bendWeight(4 * nB);
+				std::vector<float>    bendNTarget(nB);
+				std::vector<float>    bendK(nB, float(TriangleBending::k_stiff));
+				for (uint32_t i = 0; i < nB; ++i) {
+					auto &b = bendingConstraints[i];
+					bendIdx[4*i + 0] = uint32_t(b.p0_idx);
+					bendIdx[4*i + 1] = uint32_t(b.p1_idx);
+					bendIdx[4*i + 2] = uint32_t(b.p2_idx);
+					bendIdx[4*i + 3] = uint32_t(b.p3_idx);
+					for (int r = 0; r < 4; ++r)
+						bendWeight[4*i + r] = float(b.weightVert[r]);
+					bendNTarget[i] = float(b.n);
+				}
+				avbd->uploadBendings(nB, bendIdx.data(), bendWeight.data(),
+				                     bendNTarget.data(), bendK.data());
+
 				sysMat[sysMatId].avbd = avbd;
 				std::printf("[avbd] AvbdSolver loaded + uploaded "
-				            "(nVerts=%u, nSprings=%u, nTri=%u, nAttach=%u, h=%g, invH²=%g)\n",
-				            nV, nS, nT, nA, h, invHSq);
+				            "(nVerts=%u, nSprings=%u, nTri=%u, nAttach=%u, nBend=%u, h=%g, invH²=%g)\n",
+				            nV, nS, nT, nA, nB, h, invHSq);
 			} else {
 				std::fprintf(stderr,
 				             "[avbd] FAILED to construct AvbdSolver; "
