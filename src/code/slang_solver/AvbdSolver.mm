@@ -39,6 +39,7 @@ struct AvbdSolver::Impl {
     id<MTLComputePipelineState> psoSpringForce      = nil;
     id<MTLComputePipelineState> psoAttachmentForce  = nil;
     id<MTLComputePipelineState> psoTriangleMembraneForce = nil;
+    id<MTLComputePipelineState> psoTriangleBendingForce  = nil;
 
     // Per-vertex state buffers (allocated by setupMesh).
     id<MTLBuffer> bufPositions = nil;   // length = 3 * nVerts (float)
@@ -86,10 +87,24 @@ struct AvbdSolver::Impl {
     id<MTLBuffer> bufVertTriIdx        = nil; // uint per (3 * nTri)
     id<MTLBuffer> bufVertTriRole       = nil; // uint per (3 * nTri)
 
+    // Bending constraint buffers (allocated by uploadBendings).
+    id<MTLBuffer> bufBendIdx           = nil; // uint per (4 * nBend) — 4-vert stencil
+    id<MTLBuffer> bufBendWeight        = nil; // float per (4 * nBend) — Laplacian weights
+    id<MTLBuffer> bufBendNTarget       = nil; // float per nBend — rest magnitude
+    id<MTLBuffer> bufBendStiffness     = nil; // float per nBend
+    id<MTLBuffer> bufBendGrad          = nil; // padded float3 per (4 * nBend)
+    id<MTLBuffer> bufBendHessScalar    = nil; // float per (4 * nBend)
+
+    // Vertex → bending CSR. K=4, role ∈ {0, 1, 2, 3}.
+    id<MTLBuffer> bufVertBendOffset    = nil; // uint per (nVerts+1)
+    id<MTLBuffer> bufVertBendIdx       = nil; // uint per (4 * nBend)
+    id<MTLBuffer> bufVertBendRole      = nil; // uint per (4 * nBend)
+
     uint32_t nVerts   = 0;
     uint32_t nSprings = 0;
     uint32_t nAttach  = 0;
     uint32_t nTri     = 0;
+    uint32_t nBend    = 0;
 
     bool ok = false;
     bool meshReady = false;
@@ -148,8 +163,9 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     id<MTLLibrary> libSpringForce         = Impl::loadLib(impl_->device, root + "spring_force.metallib",            "spring_force");
     id<MTLLibrary> libAttachmentForce     = Impl::loadLib(impl_->device, root + "attachment_force.metallib",        "attachment_force");
     id<MTLLibrary> libTriMembraneForce    = Impl::loadLib(impl_->device, root + "triangle_membrane_force.metallib", "triangle_membrane_force");
+    id<MTLLibrary> libTriBendingForce     = Impl::loadLib(impl_->device, root + "triangle_bending_force.metallib",  "triangle_bending_force");
     if (!libInit || !libSpring || !libAttachment || !libTriangle || !libBending || !libSolve ||
-        !libSpringForce || !libAttachmentForce || !libTriMembraneForce) return;
+        !libSpringForce || !libAttachmentForce || !libTriMembraneForce || !libTriBendingForce) return;
 
     impl_->psoInit             = Impl::makePSO(impl_->device, libInit,       "main_0", "vbd_init");
     impl_->psoGatherSpring     = Impl::makePSO(impl_->device, libSpring,     "main_0", "vbd_gather_spring");
@@ -160,14 +176,15 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     impl_->psoSpringForce            = Impl::makePSO(impl_->device, libSpringForce,         "main_0", "spring_force");
     impl_->psoAttachmentForce        = Impl::makePSO(impl_->device, libAttachmentForce,     "main_0", "attachment_force");
     impl_->psoTriangleMembraneForce  = Impl::makePSO(impl_->device, libTriMembraneForce,    "main_0", "triangle_membrane_force");
+    impl_->psoTriangleBendingForce   = Impl::makePSO(impl_->device, libTriBendingForce,     "main_0", "triangle_bending_force");
     if (!impl_->psoInit || !impl_->psoGatherSpring || !impl_->psoGatherAttachment ||
         !impl_->psoGatherTriangle || !impl_->psoGatherBending || !impl_->psoSolveApply ||
         !impl_->psoSpringForce || !impl_->psoAttachmentForce ||
-        !impl_->psoTriangleMembraneForce) return;
+        !impl_->psoTriangleMembraneForce || !impl_->psoTriangleBendingForce) return;
 
     impl_->ok = true;
     std::fprintf(stderr,
-        "AvbdSolver: 9 kernels loaded (init, gather_*, solve_apply, spring/attachment/triangle_force)\n");
+        "AvbdSolver: 10 kernels loaded — full AVBD pipeline (init, gather_*, solve_apply, spring/attach/tri/bend_force)\n");
 }
 
 AvbdSolver::~AvbdSolver() { delete impl_; }
@@ -381,6 +398,62 @@ void AvbdSolver::uploadTriangles(uint32_t nTri,
                                   options:opts];
 }
 
+void AvbdSolver::uploadBendings(uint32_t nBend,
+                                 const uint32_t* bendIdx,
+                                 const float* weight,
+                                 const float* nTarget,
+                                 const float* stiffness) {
+    if (!ok()) return;
+    impl_->nBend = nBend;
+    const NSUInteger bytesBendIdx    = 4 * nBend * sizeof(uint32_t);
+    const NSUInteger bytesBendWeight = 4 * nBend * sizeof(float);
+    const NSUInteger bytesF          = nBend * sizeof(float);
+    const NSUInteger bytesGradPadded = 4 * 4 * nBend * sizeof(float);
+    const NSUInteger bytesHessScalar = 4 * nBend * sizeof(float);
+    const MTLResourceOptions opts = MTLResourceStorageModeShared;
+
+    impl_->bufBendIdx        = [impl_->device newBufferWithBytes:bendIdx   length:bytesBendIdx    options:opts];
+    impl_->bufBendWeight     = [impl_->device newBufferWithBytes:weight    length:bytesBendWeight options:opts];
+    impl_->bufBendNTarget    = [impl_->device newBufferWithBytes:nTarget   length:bytesF          options:opts];
+    impl_->bufBendStiffness  = [impl_->device newBufferWithBytes:stiffness length:bytesF          options:opts];
+    impl_->bufBendGrad       = [impl_->device newBufferWithLength:bytesGradPadded options:opts];
+    impl_->bufBendHessScalar = [impl_->device newBufferWithLength:bytesHessScalar options:opts];
+
+    // Build vertex→bending CSR. K=4, role ∈ {0,1,2,3} per stencil corner.
+    const uint32_t nV = impl_->nVerts;
+    std::vector<uint32_t> counts(nV, 0u);
+    for (uint32_t c = 0; c < nBend; ++c)
+        for (uint32_t r = 0; r < 4; ++r) counts[bendIdx[4*c + r]]++;
+    std::vector<uint32_t> offsets(nV + 1, 0u);
+    for (uint32_t v = 0; v < nV; ++v) offsets[v + 1] = offsets[v] + counts[v];
+    const uint32_t totalInc = offsets[nV];
+    std::vector<uint32_t> idxArr(totalInc, 0u);
+    std::vector<uint32_t> roleArr(totalInc, 0u);
+    std::vector<uint32_t> cursor(nV, 0u);
+    for (uint32_t c = 0; c < nBend; ++c) {
+        for (uint32_t r = 0; r < 4; ++r) {
+            const uint32_t v = bendIdx[4*c + r];
+            const uint32_t p = offsets[v] + cursor[v];
+            idxArr[p]  = c;
+            roleArr[p] = r;
+            cursor[v]++;
+        }
+    }
+
+    impl_->bufVertBendOffset =
+        [impl_->device newBufferWithBytes:offsets.data()
+                                   length:offsets.size() * sizeof(uint32_t)
+                                  options:opts];
+    impl_->bufVertBendIdx =
+        [impl_->device newBufferWithBytes:idxArr.data()
+                                   length:idxArr.size() * sizeof(uint32_t)
+                                  options:opts];
+    impl_->bufVertBendRole =
+        [impl_->device newBufferWithBytes:roleArr.data()
+                                   length:roleArr.size() * sizeof(uint32_t)
+                                  options:opts];
+}
+
 int AvbdSolver::step() {
     if (!ok() || !impl_->meshReady) return -1;
 
@@ -475,7 +548,32 @@ int AvbdSolver::step() {
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     }
 
-    // 6. vbd_solve_apply: invert 3x3 H, write positions += -H⁻¹ g.
+    // 6. triangle_bending_force + vbd_gather_bending (if nBend > 0).
+    if (impl_->nBend > 0) {
+        [enc setComputePipelineState:impl_->psoTriangleBendingForce];
+        [enc setBuffer:impl_->bufPositions       offset:0 atIndex:0];
+        [enc setBuffer:impl_->bufBendIdx         offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufBendWeight      offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufBendNTarget     offset:0 atIndex:3];
+        [enc setBuffer:impl_->bufBendStiffness   offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufBendGrad        offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufBendHessScalar  offset:0 atIndex:6];
+        [enc dispatchThreads:MTLSizeMake(impl_->nBend, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+
+        [enc setComputePipelineState:impl_->psoGatherBending];
+        [enc setBuffer:impl_->bufBendGrad        offset:0 atIndex:0];
+        [enc setBuffer:impl_->bufBendHessScalar  offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufVertBendOffset  offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufVertBendIdx     offset:0 atIndex:3];
+        [enc setBuffer:impl_->bufVertBendRole    offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufGScratch        offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufHScratch        offset:0 atIndex:6];
+        [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    }
+
+    // 7. vbd_solve_apply: invert 3x3 H, write positions += -H⁻¹ g.
     [enc setComputePipelineState:impl_->psoSolveApply];
     [enc setBuffer:impl_->bufGScratch  offset:0 atIndex:0];
     [enc setBuffer:impl_->bufHScratch  offset:0 atIndex:1];

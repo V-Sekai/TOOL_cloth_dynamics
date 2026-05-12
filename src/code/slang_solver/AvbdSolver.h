@@ -89,13 +89,29 @@ public:
                          const uint32_t* triIdx,
                          const float* stiffness);
 
-    // Dispatch one full AVBD outer iteration:
+    // Upload dihedral bending constraints. `nBend` bending stencils
+    // with 4-vertex indices `bendIdx` (length 4*nBend), bind-time
+    // Laplacian `weight` (length 4*nBend), rest magnitude
+    // `nTarget[c]` (degenerate stencils have nTarget=0 → no
+    // contribution), and stiffness `stiffness[c]`. Allocates output
+    // buffers for triangle_bending_force (grad, hessScalar at slot
+    // 4*c+r).
+    void uploadBendings(uint32_t nBend,
+                        const uint32_t* bendIdx,
+                        const float* weight,
+                        const float* nTarget,
+                        const float* stiffness);
+
+    // Dispatch one full AVBD outer iteration covering every constraint
+    // type DiffCloth uses:
     //   1. vbd_init                   inertial term per vertex
     //   2. spring_force + gather      (if nSprings > 0)
     //   3. attachment_force + gather  (if nAttach > 0)
     //   4. triangle_membrane_force
     //        + vbd_gather_triangle    (if nTri > 0)
-    //   5. vbd_solve_apply            invert 3x3 H, update positions
+    //   5. triangle_bending_force
+    //        + vbd_gather_bending     (if nBend > 0)
+    //   6. vbd_solve_apply            invert 3x3 H, update positions
     //
     // After step() returns, `readPositions(out)` returns the updated
     // vertex positions. Returns 0 on success, -1 if not set up.
