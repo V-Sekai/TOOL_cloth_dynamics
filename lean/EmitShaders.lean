@@ -35,6 +35,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("spring_force",       SpringForce.shader)
   , ("attachment_force",   AttachmentForce.shader)
   , ("triangle_membrane_force", TriangleMembraneForce.shader)
+  , ("triangle_bending_force", TriangleBendingForce.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
