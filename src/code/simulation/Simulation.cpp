@@ -3168,16 +3168,39 @@ void Simulation::initializePrefactoredMatrices() {
 		}
 
 		if (g_useAvbd && sysMatId == 0) {
-			// PR-E scaffold: instantiate AvbdSolver at scene init to
-			// confirm all 10 AVBD kernels load on this device. The
-			// solver is constructed but not yet wired into step()
-			// — that's a follow-up PR. We attach to sysMat[0] only
-			// because AvbdSolver is per-scene (not per-sysMat).
+			// PR-E continued: instantiate AvbdSolver at scene init and
+			// upload mesh state (positions, masses, invH²). Constraint
+			// uploads (springs, attachments, triangles, bendings)
+			// follow in subsequent PRs.
 			auto avbd = std::make_shared<cloth::AvbdSolver>(
 				slangMetallibDir().c_str());
 			if (avbd->ok()) {
+				// Convert DiffCloth's fp64 particle state to the fp32
+				// flat arrays AvbdSolver.setupMesh consumes.
+				const uint32_t nV = uint32_t(particles.size());
+				std::vector<float> posF(3 * nV), predF(3 * nV), massF(nV);
+				for (uint32_t i = 0; i < nV; ++i) {
+					posF[3*i+0]  = float(particles[i].pos[0]);
+					posF[3*i+1]  = float(particles[i].pos[1]);
+					posF[3*i+2]  = float(particles[i].pos[2]);
+					// At scene init the predictor equals current pos —
+					// real per-step predictors come from the time-step
+					// integrator and will be uploaded in the per-step
+					// shuttle (follow-up PR).
+					predF[3*i+0] = posF[3*i+0];
+					predF[3*i+1] = posF[3*i+1];
+					predF[3*i+2] = posF[3*i+2];
+					massF[i]     = float(particles[i].mass);
+				}
+				const float h = float(sceneConfig.timeStep);
+				const float invHSq = 1.0f / (h * h);
+				avbd->setupMesh(nV, posF.data(), predF.data(),
+				                massF.data(), invHSq);
+
 				sysMat[sysMatId].avbd = avbd;
-				std::printf("[avbd] AvbdSolver loaded — 10 AVBD kernels ready (scaffold; step() routing in follow-up PR)\n");
+				std::printf("[avbd] AvbdSolver loaded + mesh uploaded "
+				            "(nVerts=%u, h=%g, invH²=%g)\n",
+				            nV, h, invHSq);
 			} else {
 				std::fprintf(stderr,
 				             "[avbd] FAILED to construct AvbdSolver; "
