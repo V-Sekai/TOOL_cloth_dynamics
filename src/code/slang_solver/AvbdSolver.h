@@ -70,14 +70,19 @@ public:
                        const float* restLen,
                        const float* stiffness);
 
-    // Dispatch one AVBD outer iteration. Currently runs:
+    // Dispatch one full AVBD outer iteration on the spring-only path:
     //   1. vbd_init           writes inertial term to (gScratch, hScratch)
-    //   2. spring_force       per-spring force + GN Hessian into output buffers
-    //   3. vbd_gather_spring  per-vertex accumulates spring contributions
-    //                         into (gScratch, hScratch) via CSR adjacency
-    // solve_apply lands in a follow-up PR. Returns 0 on success,
-    // -1 if not set up.
+    //   2. spring_force       per-spring force + GN Hessian
+    //   3. vbd_gather_spring  per-vertex accumulation via CSR adjacency
+    //   4. vbd_solve_apply    invert 3x3 H, update positions in place
+    //
+    // After step() returns, `readPositions(out)` returns the updated
+    // vertex positions. Returns 0 on success, -1 if not set up.
     int step();
+
+    // Read back current vertex positions to a host array. Used by tests.
+    // `positions_out` length = 3 * nVerts (xyz).
+    void readPositions(std::vector<float>& positions_out) const;
 
     // Read back current scratch state to host arrays. Used by tests.
     // `gScratch_out` length 3*nVerts (xyz); `hScratch_out` length 6*nVerts
