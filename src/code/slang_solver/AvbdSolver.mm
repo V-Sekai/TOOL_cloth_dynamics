@@ -40,8 +40,12 @@ struct AvbdSolver::Impl {
     id<MTLComputePipelineState> psoAttachmentForce  = nil;        // legacy non-AL path (kept for fallback)
     id<MTLComputePipelineState> psoAttachmentForceAl = nil;       // AL-augmented (active)
     id<MTLComputePipelineState> psoAttachmentDualUpdate = nil;    // per-iter λ ramp
-    id<MTLComputePipelineState> psoTriangleMembraneForce = nil;
-    id<MTLComputePipelineState> psoTriangleBendingForce  = nil;
+    id<MTLComputePipelineState> psoTriangleMembraneForce = nil;        // legacy non-AL
+    id<MTLComputePipelineState> psoTriangleMembraneForceAl = nil;      // AL-augmented (active)
+    id<MTLComputePipelineState> psoTriangleMembraneDualUpdate = nil;
+    id<MTLComputePipelineState> psoTriangleBendingForce  = nil;        // legacy non-AL
+    id<MTLComputePipelineState> psoTriangleBendingForceAl = nil;       // AL-augmented (active)
+    id<MTLComputePipelineState> psoTriangleBendingDualUpdate = nil;
 
     // Per-vertex state buffers (allocated by setupMesh).
     id<MTLBuffer> bufPositions = nil;   // length = 3 * nVerts (float)
@@ -90,6 +94,11 @@ struct AvbdSolver::Impl {
     id<MTLBuffer> bufTriGrad           = nil; // padded float3 per (3 * nTri)
     id<MTLBuffer> bufTriHessScalar     = nil; // float per (3 * nTri)
 
+    // AL state per membrane triangle (PR-F).
+    id<MTLBuffer> bufTriLambda0        = nil; // padded float3 per tri (col 0)
+    id<MTLBuffer> bufTriLambda1        = nil; // padded float3 per tri (col 1)
+    id<MTLBuffer> bufTriGamma          = nil; // float per tri
+
     // Vertex → triangle CSR. K=3, so role ∈ {0, 1, 2}.
     id<MTLBuffer> bufVertTriOffset     = nil; // uint per (nVerts+1)
     id<MTLBuffer> bufVertTriIdx        = nil; // uint per (3 * nTri)
@@ -102,6 +111,10 @@ struct AvbdSolver::Impl {
     id<MTLBuffer> bufBendStiffness     = nil; // float per nBend
     id<MTLBuffer> bufBendGrad          = nil; // padded float3 per (4 * nBend)
     id<MTLBuffer> bufBendHessScalar    = nil; // float per (4 * nBend)
+
+    // AL state per bending constraint (PR-F).
+    id<MTLBuffer> bufBendLambda        = nil; // padded float3 per bend
+    id<MTLBuffer> bufBendGamma         = nil; // float per bend
 
     // Vertex → bending CSR. K=4, role ∈ {0, 1, 2, 3}.
     id<MTLBuffer> bufVertBendOffset    = nil; // uint per (nVerts+1)
@@ -172,11 +185,17 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     id<MTLLibrary> libAttachmentForce     = Impl::loadLib(impl_->device, root + "attachment_force.metallib",        "attachment_force");
     id<MTLLibrary> libAttachmentForceAl   = Impl::loadLib(impl_->device, root + "attachment_force_al.metallib",     "attachment_force_al");
     id<MTLLibrary> libAttachmentDualUpdate= Impl::loadLib(impl_->device, root + "attachment_dual_update.metallib",  "attachment_dual_update");
-    id<MTLLibrary> libTriMembraneForce    = Impl::loadLib(impl_->device, root + "triangle_membrane_force.metallib", "triangle_membrane_force");
-    id<MTLLibrary> libTriBendingForce     = Impl::loadLib(impl_->device, root + "triangle_bending_force.metallib",  "triangle_bending_force");
+    id<MTLLibrary> libTriMembraneForce       = Impl::loadLib(impl_->device, root + "triangle_membrane_force.metallib",        "triangle_membrane_force");
+    id<MTLLibrary> libTriMembraneForceAl     = Impl::loadLib(impl_->device, root + "triangle_membrane_force_al.metallib",     "triangle_membrane_force_al");
+    id<MTLLibrary> libTriMembraneDualUpdate  = Impl::loadLib(impl_->device, root + "triangle_membrane_dual_update.metallib",  "triangle_membrane_dual_update");
+    id<MTLLibrary> libTriBendingForce        = Impl::loadLib(impl_->device, root + "triangle_bending_force.metallib",         "triangle_bending_force");
+    id<MTLLibrary> libTriBendingForceAl      = Impl::loadLib(impl_->device, root + "triangle_bending_force_al.metallib",      "triangle_bending_force_al");
+    id<MTLLibrary> libTriBendingDualUpdate   = Impl::loadLib(impl_->device, root + "triangle_bending_dual_update.metallib",   "triangle_bending_dual_update");
     if (!libInit || !libSpring || !libAttachment || !libTriangle || !libBending || !libSolve ||
         !libSpringForce || !libAttachmentForce || !libAttachmentForceAl ||
-        !libAttachmentDualUpdate || !libTriMembraneForce || !libTriBendingForce) return;
+        !libAttachmentDualUpdate || !libTriMembraneForce || !libTriMembraneForceAl ||
+        !libTriMembraneDualUpdate || !libTriBendingForce || !libTriBendingForceAl ||
+        !libTriBendingDualUpdate) return;
 
     impl_->psoInit             = Impl::makePSO(impl_->device, libInit,       "main_0", "vbd_init");
     impl_->psoGatherSpring     = Impl::makePSO(impl_->device, libSpring,     "main_0", "vbd_gather_spring");
@@ -188,17 +207,24 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     impl_->psoAttachmentForce        = Impl::makePSO(impl_->device, libAttachmentForce,     "main_0", "attachment_force");
     impl_->psoAttachmentForceAl      = Impl::makePSO(impl_->device, libAttachmentForceAl,   "main_0", "attachment_force_al");
     impl_->psoAttachmentDualUpdate   = Impl::makePSO(impl_->device, libAttachmentDualUpdate,"main_0", "attachment_dual_update");
-    impl_->psoTriangleMembraneForce  = Impl::makePSO(impl_->device, libTriMembraneForce,    "main_0", "triangle_membrane_force");
-    impl_->psoTriangleBendingForce   = Impl::makePSO(impl_->device, libTriBendingForce,     "main_0", "triangle_bending_force");
+    impl_->psoTriangleMembraneForce       = Impl::makePSO(impl_->device, libTriMembraneForce,       "main_0", "triangle_membrane_force");
+    impl_->psoTriangleMembraneForceAl     = Impl::makePSO(impl_->device, libTriMembraneForceAl,     "main_0", "triangle_membrane_force_al");
+    impl_->psoTriangleMembraneDualUpdate  = Impl::makePSO(impl_->device, libTriMembraneDualUpdate,  "main_0", "triangle_membrane_dual_update");
+    impl_->psoTriangleBendingForce        = Impl::makePSO(impl_->device, libTriBendingForce,        "main_0", "triangle_bending_force");
+    impl_->psoTriangleBendingForceAl      = Impl::makePSO(impl_->device, libTriBendingForceAl,      "main_0", "triangle_bending_force_al");
+    impl_->psoTriangleBendingDualUpdate   = Impl::makePSO(impl_->device, libTriBendingDualUpdate,   "main_0", "triangle_bending_dual_update");
     if (!impl_->psoInit || !impl_->psoGatherSpring || !impl_->psoGatherAttachment ||
         !impl_->psoGatherTriangle || !impl_->psoGatherBending || !impl_->psoSolveApply ||
         !impl_->psoSpringForce || !impl_->psoAttachmentForce ||
         !impl_->psoAttachmentForceAl || !impl_->psoAttachmentDualUpdate ||
-        !impl_->psoTriangleMembraneForce || !impl_->psoTriangleBendingForce) return;
+        !impl_->psoTriangleMembraneForce || !impl_->psoTriangleMembraneForceAl ||
+        !impl_->psoTriangleMembraneDualUpdate ||
+        !impl_->psoTriangleBendingForce || !impl_->psoTriangleBendingForceAl ||
+        !impl_->psoTriangleBendingDualUpdate) return;
 
     impl_->ok = true;
     std::fprintf(stderr,
-        "AvbdSolver: 12 kernels loaded — full AVBD pipeline + AL attachment path\n");
+        "AvbdSolver: 16 kernels loaded — full AVBD + AL on all 3 constraint types\n");
 }
 
 AvbdSolver::~AvbdSolver() { delete impl_; }
@@ -383,6 +409,14 @@ void AvbdSolver::uploadTriangles(uint32_t nTri,
     impl_->bufTriGrad       = [impl_->device newBufferWithLength:bytesGradPadded options:opts];
     impl_->bufTriHessScalar = [impl_->device newBufferWithLength:bytesHessScalar options:opts];
 
+    // AL state: λ_col0 / λ_col1 zero-init, γ defaults to stiffness.
+    const NSUInteger bytesTriLam = 4 * nTri * sizeof(float);  // padded float3 per tri
+    impl_->bufTriLambda0 = [impl_->device newBufferWithLength:bytesTriLam options:opts];
+    impl_->bufTriLambda1 = [impl_->device newBufferWithLength:bytesTriLam options:opts];
+    impl_->bufTriGamma   = [impl_->device newBufferWithBytes:stiffness length:bytesF options:opts];
+    std::memset(impl_->bufTriLambda0.contents, 0, bytesTriLam);
+    std::memset(impl_->bufTriLambda1.contents, 0, bytesTriLam);
+
     // Build vertex→triangle CSR. K=3, role ∈ {0,1,2} per corner.
     const uint32_t nV = impl_->nVerts;
     std::vector<uint32_t> counts(nV, 0u);
@@ -438,6 +472,12 @@ void AvbdSolver::uploadBendings(uint32_t nBend,
     impl_->bufBendStiffness  = [impl_->device newBufferWithBytes:stiffness length:bytesF          options:opts];
     impl_->bufBendGrad       = [impl_->device newBufferWithLength:bytesGradPadded options:opts];
     impl_->bufBendHessScalar = [impl_->device newBufferWithLength:bytesHessScalar options:opts];
+
+    // AL state: λ zero-init, γ defaults to stiffness.
+    const NSUInteger bytesBendLam = 4 * nBend * sizeof(float);
+    impl_->bufBendLambda = [impl_->device newBufferWithLength:bytesBendLam options:opts];
+    impl_->bufBendGamma  = [impl_->device newBufferWithBytes:stiffness length:bytesF options:opts];
+    std::memset(impl_->bufBendLambda.contents, 0, bytesBendLam);
 
     // Build vertex→bending CSR. K=4, role ∈ {0,1,2,3} per stencil corner.
     const uint32_t nV = impl_->nVerts;
@@ -550,14 +590,18 @@ int AvbdSolver::step() {
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     }
 
-    // 5. triangle_membrane_force + vbd_gather_triangle (if nTri > 0).
+    // 5. triangle_membrane_force_al + vbd_gather_triangle (if nTri > 0).
+    //    AL force kernel adds λ_col0/λ_col1 to per-vertex gradient.
+    //    With λ=0 initial it's bit-equivalent to the non-AL kernel.
     if (impl_->nTri > 0) {
-        [enc setComputePipelineState:impl_->psoTriangleMembraneForce];
+        [enc setComputePipelineState:impl_->psoTriangleMembraneForceAl];
         [enc setBuffer:impl_->bufPositions      offset:0 atIndex:0];
         [enc setBuffer:impl_->bufTriIdx         offset:0 atIndex:1];
         [enc setBuffer:impl_->bufTriStiffness   offset:0 atIndex:2];
-        [enc setBuffer:impl_->bufTriGrad        offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufTriHessScalar  offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufTriLambda0     offset:0 atIndex:3];
+        [enc setBuffer:impl_->bufTriLambda1     offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufTriGrad        offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufTriHessScalar  offset:0 atIndex:6];
         [enc dispatchThreads:MTLSizeMake(impl_->nTri, 1, 1)
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
 
@@ -573,16 +617,17 @@ int AvbdSolver::step() {
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     }
 
-    // 6. triangle_bending_force + vbd_gather_bending (if nBend > 0).
+    // 6. triangle_bending_force_al + vbd_gather_bending (if nBend > 0).
     if (impl_->nBend > 0) {
-        [enc setComputePipelineState:impl_->psoTriangleBendingForce];
+        [enc setComputePipelineState:impl_->psoTriangleBendingForceAl];
         [enc setBuffer:impl_->bufPositions       offset:0 atIndex:0];
         [enc setBuffer:impl_->bufBendIdx         offset:0 atIndex:1];
         [enc setBuffer:impl_->bufBendWeight      offset:0 atIndex:2];
         [enc setBuffer:impl_->bufBendNTarget     offset:0 atIndex:3];
         [enc setBuffer:impl_->bufBendStiffness   offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufBendGrad        offset:0 atIndex:5];
-        [enc setBuffer:impl_->bufBendHessScalar  offset:0 atIndex:6];
+        [enc setBuffer:impl_->bufBendLambda      offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufBendGrad        offset:0 atIndex:6];
+        [enc setBuffer:impl_->bufBendHessScalar  offset:0 atIndex:7];
         [enc dispatchThreads:MTLSizeMake(impl_->nBend, 1, 1)
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
 
@@ -644,6 +689,45 @@ int AvbdSolver::stepDualAttachments() {
     [enc setBuffer:impl_->bufAttachGamma     offset:0 atIndex:3];
     [enc setBuffer:impl_->bufAttachLambda    offset:0 atIndex:4];
     [enc dispatchThreads:MTLSizeMake(impl_->nAttach, 1, 1)
+   threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    [enc endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+    return 0;
+}
+
+int AvbdSolver::stepDualMembrane() {
+    if (!ok() || !impl_->meshReady) return -1;
+    if (impl_->nTri == 0) return 0;
+    id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:impl_->psoTriangleMembraneDualUpdate];
+    [enc setBuffer:impl_->bufPositions  offset:0 atIndex:0];
+    [enc setBuffer:impl_->bufTriIdx     offset:0 atIndex:1];
+    [enc setBuffer:impl_->bufTriGamma   offset:0 atIndex:2];
+    [enc setBuffer:impl_->bufTriLambda0 offset:0 atIndex:3];
+    [enc setBuffer:impl_->bufTriLambda1 offset:0 atIndex:4];
+    [enc dispatchThreads:MTLSizeMake(impl_->nTri, 1, 1)
+   threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    [enc endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+    return 0;
+}
+
+int AvbdSolver::stepDualBending() {
+    if (!ok() || !impl_->meshReady) return -1;
+    if (impl_->nBend == 0) return 0;
+    id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:impl_->psoTriangleBendingDualUpdate];
+    [enc setBuffer:impl_->bufPositions    offset:0 atIndex:0];
+    [enc setBuffer:impl_->bufBendIdx      offset:0 atIndex:1];
+    [enc setBuffer:impl_->bufBendWeight   offset:0 atIndex:2];
+    [enc setBuffer:impl_->bufBendNTarget  offset:0 atIndex:3];
+    [enc setBuffer:impl_->bufBendGamma    offset:0 atIndex:4];
+    [enc setBuffer:impl_->bufBendLambda   offset:0 atIndex:5];
+    [enc dispatchThreads:MTLSizeMake(impl_->nBend, 1, 1)
    threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     [enc endEncoding];
     [cb commit];
