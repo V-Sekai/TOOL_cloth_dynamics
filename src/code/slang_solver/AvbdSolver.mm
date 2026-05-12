@@ -37,7 +37,9 @@ struct AvbdSolver::Impl {
     // current positions before the gather kernel scatters them
     // per-vertex).
     id<MTLComputePipelineState> psoSpringForce      = nil;
-    id<MTLComputePipelineState> psoAttachmentForce  = nil;
+    id<MTLComputePipelineState> psoAttachmentForce  = nil;        // legacy non-AL path (kept for fallback)
+    id<MTLComputePipelineState> psoAttachmentForceAl = nil;       // AL-augmented (active)
+    id<MTLComputePipelineState> psoAttachmentDualUpdate = nil;    // per-iter λ ramp
     id<MTLComputePipelineState> psoTriangleMembraneForce = nil;
     id<MTLComputePipelineState> psoTriangleBendingForce  = nil;
 
@@ -71,6 +73,12 @@ struct AvbdSolver::Impl {
     id<MTLBuffer> bufAttachStiffness   = nil; // float per attachment
     id<MTLBuffer> bufAttachGradV       = nil; // padded float3 per attachment
     id<MTLBuffer> bufAttachHessScalar  = nil; // float per attachment
+
+    // Augmented-Lagrangian state per attachment (PR-F).
+    // λ_c — dual multiplier, accumulates across outer iters (padded float3).
+    // γ_c — AL penalty (per-attachment, defaults to stiffness).
+    id<MTLBuffer> bufAttachLambda      = nil;
+    id<MTLBuffer> bufAttachGamma       = nil;
 
     // Vertex → attachment CSR. Role is implicit (always 0 for K=1).
     id<MTLBuffer> bufVertAttachOffset  = nil; // uint per (nVerts+1)
@@ -162,10 +170,13 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     id<MTLLibrary> libSolve      = Impl::loadLib(impl_->device, root + "vbd_solve_apply.metallib",      "vbd_solve_apply");
     id<MTLLibrary> libSpringForce         = Impl::loadLib(impl_->device, root + "spring_force.metallib",            "spring_force");
     id<MTLLibrary> libAttachmentForce     = Impl::loadLib(impl_->device, root + "attachment_force.metallib",        "attachment_force");
+    id<MTLLibrary> libAttachmentForceAl   = Impl::loadLib(impl_->device, root + "attachment_force_al.metallib",     "attachment_force_al");
+    id<MTLLibrary> libAttachmentDualUpdate= Impl::loadLib(impl_->device, root + "attachment_dual_update.metallib",  "attachment_dual_update");
     id<MTLLibrary> libTriMembraneForce    = Impl::loadLib(impl_->device, root + "triangle_membrane_force.metallib", "triangle_membrane_force");
     id<MTLLibrary> libTriBendingForce     = Impl::loadLib(impl_->device, root + "triangle_bending_force.metallib",  "triangle_bending_force");
     if (!libInit || !libSpring || !libAttachment || !libTriangle || !libBending || !libSolve ||
-        !libSpringForce || !libAttachmentForce || !libTriMembraneForce || !libTriBendingForce) return;
+        !libSpringForce || !libAttachmentForce || !libAttachmentForceAl ||
+        !libAttachmentDualUpdate || !libTriMembraneForce || !libTriBendingForce) return;
 
     impl_->psoInit             = Impl::makePSO(impl_->device, libInit,       "main_0", "vbd_init");
     impl_->psoGatherSpring     = Impl::makePSO(impl_->device, libSpring,     "main_0", "vbd_gather_spring");
@@ -175,16 +186,19 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     impl_->psoSolveApply       = Impl::makePSO(impl_->device, libSolve,      "main_0", "vbd_solve_apply");
     impl_->psoSpringForce            = Impl::makePSO(impl_->device, libSpringForce,         "main_0", "spring_force");
     impl_->psoAttachmentForce        = Impl::makePSO(impl_->device, libAttachmentForce,     "main_0", "attachment_force");
+    impl_->psoAttachmentForceAl      = Impl::makePSO(impl_->device, libAttachmentForceAl,   "main_0", "attachment_force_al");
+    impl_->psoAttachmentDualUpdate   = Impl::makePSO(impl_->device, libAttachmentDualUpdate,"main_0", "attachment_dual_update");
     impl_->psoTriangleMembraneForce  = Impl::makePSO(impl_->device, libTriMembraneForce,    "main_0", "triangle_membrane_force");
     impl_->psoTriangleBendingForce   = Impl::makePSO(impl_->device, libTriBendingForce,     "main_0", "triangle_bending_force");
     if (!impl_->psoInit || !impl_->psoGatherSpring || !impl_->psoGatherAttachment ||
         !impl_->psoGatherTriangle || !impl_->psoGatherBending || !impl_->psoSolveApply ||
         !impl_->psoSpringForce || !impl_->psoAttachmentForce ||
+        !impl_->psoAttachmentForceAl || !impl_->psoAttachmentDualUpdate ||
         !impl_->psoTriangleMembraneForce || !impl_->psoTriangleBendingForce) return;
 
     impl_->ok = true;
     std::fprintf(stderr,
-        "AvbdSolver: 10 kernels loaded — full AVBD pipeline (init, gather_*, solve_apply, spring/attach/tri/bend_force)\n");
+        "AvbdSolver: 12 kernels loaded — full AVBD pipeline + AL attachment path\n");
 }
 
 AvbdSolver::~AvbdSolver() { delete impl_; }
@@ -318,6 +332,12 @@ void AvbdSolver::uploadAttachments(uint32_t nAttach,
     impl_->bufAttachStiffness  = [impl_->device newBufferWithBytes:stiffness length:bytesF options:opts];
     impl_->bufAttachGradV      = [impl_->device newBufferWithLength:bytesVec3Padded options:opts];
     impl_->bufAttachHessScalar = [impl_->device newBufferWithLength:bytesF options:opts];
+    // AL state: λ_c starts at zero (any prior accumulation discarded
+    // on re-upload); γ_c defaults to k_c so dual ramp tracks the
+    // physical stiffness.
+    impl_->bufAttachLambda     = [impl_->device newBufferWithLength:bytesVec3Padded options:opts];
+    impl_->bufAttachGamma      = [impl_->device newBufferWithBytes:stiffness length:bytesF options:opts];
+    std::memset(impl_->bufAttachLambda.contents, 0, bytesVec3Padded);
     uploadVec3Padded(impl_->bufAttachFixedPos, fixedPos, nAttach);
 
     // Build vertex→attachment CSR. K=1, so each attachment contributes
@@ -502,15 +522,20 @@ int AvbdSolver::step() {
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     }
 
-    // 4. attachment_force + vbd_gather_attachment (if nAttach > 0).
+    // 4. attachment_force_al + vbd_gather_attachment (if nAttach > 0).
+    //    AL force kernel includes accumulated dual multiplier λ in the
+    //    gradient — with λ initialized to zero the behavior matches
+    //    the non-AL kernel exactly; once stepDualAttachments() starts
+    //    ramping λ this drives oscillation away.
     if (impl_->nAttach > 0) {
-        [enc setComputePipelineState:impl_->psoAttachmentForce];
+        [enc setComputePipelineState:impl_->psoAttachmentForceAl];
         [enc setBuffer:impl_->bufPositions          offset:0 atIndex:0];
         [enc setBuffer:impl_->bufAttachVertIdx      offset:0 atIndex:1];
         [enc setBuffer:impl_->bufAttachFixedPos     offset:0 atIndex:2];
         [enc setBuffer:impl_->bufAttachStiffness    offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufAttachGradV        offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufAttachHessScalar   offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufAttachLambda       offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufAttachGradV        offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufAttachHessScalar   offset:0 atIndex:6];
         [enc dispatchThreads:MTLSizeMake(impl_->nAttach, 1, 1)
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
 
@@ -605,6 +630,25 @@ void AvbdSolver::updateState(const float* positions, const float* predicted) {
     if (!ok() || !impl_->meshReady) return;
     uploadVec3Padded(impl_->bufPositions, positions, impl_->nVerts);
     uploadVec3Padded(impl_->bufPredicted, predicted, impl_->nVerts);
+}
+
+int AvbdSolver::stepDualAttachments() {
+    if (!ok() || !impl_->meshReady) return -1;
+    if (impl_->nAttach == 0) return 0;
+    id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:impl_->psoAttachmentDualUpdate];
+    [enc setBuffer:impl_->bufPositions       offset:0 atIndex:0];
+    [enc setBuffer:impl_->bufAttachVertIdx   offset:0 atIndex:1];
+    [enc setBuffer:impl_->bufAttachFixedPos  offset:0 atIndex:2];
+    [enc setBuffer:impl_->bufAttachGamma     offset:0 atIndex:3];
+    [enc setBuffer:impl_->bufAttachLambda    offset:0 atIndex:4];
+    [enc dispatchThreads:MTLSizeMake(impl_->nAttach, 1, 1)
+   threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    [enc endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+    return 0;
 }
 
 void AvbdSolver::readPositions(std::vector<float>& positions_out) const {
