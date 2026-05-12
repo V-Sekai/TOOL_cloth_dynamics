@@ -104,18 +104,27 @@ public:
 
     // Dispatch one full AVBD outer iteration covering every constraint
     // type DiffCloth uses:
-    //   1. vbd_init                   inertial term per vertex
-    //   2. spring_force + gather      (if nSprings > 0)
-    //   3. attachment_force + gather  (if nAttach > 0)
-    //   4. triangle_membrane_force
-    //        + vbd_gather_triangle    (if nTri > 0)
-    //   5. triangle_bending_force
-    //        + vbd_gather_bending     (if nBend > 0)
-    //   6. vbd_solve_apply            invert 3x3 H, update positions
+    //   1. vbd_init                       inertial term per vertex
+    //   2. spring_force + gather          (if nSprings > 0)
+    //   3. attachment_force_al + gather   (if nAttach > 0)
+    //                                      AL-augmented: gradient
+    //                                      includes accumulated λ_c
+    //                                      (initially zero; ramped by
+    //                                      stepDualAttachments())
+    //   4. triangle_membrane_force + gather  (if nTri > 0)
+    //   5. triangle_bending_force + gather   (if nBend > 0)
+    //   6. vbd_solve_apply                3x3 inverse + position update
     //
     // After step() returns, `readPositions(out)` returns the updated
     // vertex positions. Returns 0 on success, -1 if not set up.
     int step();
+
+    // Augmented-Lagrangian dual ramp for attachments. Per attachment
+    // c, updates λ_c ← λ_c + γ_c · (p_v − fixedPos[c]). Call after
+    // step() each AVBD outer iter to suppress oscillation on hard
+    // pins (see PR #73 convergence probe for the failure mode this
+    // fixes). No-op if nAttach == 0. Returns 0 on success.
+    int stepDualAttachments();
 
     // Per-step state refresh: re-upload positions + predicted into the
     // existing GPU buffers (no realloc). Cheap when called every step
