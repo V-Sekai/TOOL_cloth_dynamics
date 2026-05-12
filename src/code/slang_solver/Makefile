@@ -16,11 +16,15 @@ CXX        ?= clang++
 CXXFLAGS   ?= -std=c++17 -O2 -Wall -Wextra
 INCLUDES   := -I.
 
-.PHONY: test clean
+.PHONY: test test-avbd clean
 
 test: $(BUILD)/test_metal_cg_solver
 	@echo "=== Smoke test of the wrapper (no Eigen, no DiffCloth)."
 	$(BUILD)/test_metal_cg_solver $(METALLIB_DIR)
+
+test-avbd: $(BUILD)/test_avbd_solver
+	@echo "=== Smoke test of AvbdSolver — all 6 AVBD PSOs build."
+	$(BUILD)/test_avbd_solver $(METALLIB_DIR)
 
 $(BUILD)/test_metal_cg_solver: test_metal_cg_solver.cpp \
                                 $(BUILD)/MetalCGSolver.o
@@ -29,9 +33,19 @@ $(BUILD)/test_metal_cg_solver: test_metal_cg_solver.cpp \
 	  -framework Metal -framework Foundation \
 	  -o $@ $^
 
+$(BUILD)/test_avbd_solver: test_avbd_solver.cpp $(BUILD)/AvbdSolver.o
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) \
+	  -framework Metal -framework Foundation \
+	  -o $@ $^
+
 $(BUILD)/MetalCGSolver.o: MetalCGSolver.mm MetalCGSolver.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -fobjc-arc -c -o $@ MetalCGSolver.mm
+
+$(BUILD)/AvbdSolver.o: AvbdSolver.mm AvbdSolver.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -fobjc-arc -c -o $@ AvbdSolver.mm
 
 clean:
 	rm -rf $(BUILD)
