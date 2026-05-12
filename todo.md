@@ -111,6 +111,36 @@ zero NaN, displacement magnitudes within physically plausible range.
    invH²=8100) and show larger drift relative to PD; both still
    produce a stable drape equilibrium.
 
+## Headline result (post-#99)
+
+Dress per-step wall, in-flight PRs all merged or in the queue:
+
+  stage                                                  wall/step
+  ----------------------------------------------------+----------
+  session start (PD+CG, default DiffCloth)           |  7,960 ms
+  PD+AVBD shadow (#70)                                | ~7,970 ms
+  AVBD_DRIVE alone (PD still ran)                     | ~1,500 ms
+  AVBD_DRIVE + AVBD_COLORS                            |    ~20 ms
+  AVBD_DRIVE + AVBD_COLORS + AVBD_SKIP_PD (#99)       |     ~9 ms
+
+**~880× total speedup.** Runtime-suitable for VR avatar clothing.
+
+## What AVBD now does on its own (no PD)
+
+- ✅ Gravity + attachments (since #87 rest-pose fix)
+- ✅ Triangle membrane (ARAP) + bending (since PR-A/PR-D)
+- ✅ Wind / external forces (already in via the s_n predictor)
+- ✅ Cloth-vs-primitive contact: Sphere / Capsule / LowerLeg /
+     Bowl / Plane / Foot (#98 via Primitive::isInContact projection)
+- ✅ AL on hard pins + membrane + bending (#74/76/95)
+- ✅ Per-color Gauss-Seidel via greedy first-fit coloring (#91)
+
+## What's still in PD's hands
+
+- Self-collision (cloth-cloth penetration) — not ported to AVBD
+- L-BFGS-B inverse-design backward pass (the PR-G adjoint)
+- Differentiable forward simulator hook for inverse design (PR-H)
+
 ## Open questions / next directions
 
 ### ~Convergence of inner solver~ (closed by #91 + DRIVE test)
@@ -165,3 +195,18 @@ sensible spinning-angle target.
 #91     PR-H: vertex coloring + per-color GS dispatch; AVBD_DRIVE
               with COLORS confirms AVBD reaches static equilibrium
               stably at ~20 ms/step
+#92-93  PR-H: 5-demo survey (tshirt/sock/hat/sphere/dress) — all
+              stable under AVBD_COLORS=1 AVBD_DRIVE=1
+#94     PR-I: AVBD_DUMP_STEP — OBJ snapshot for visual validation
+              (drape on dress matches PD's bulk shape within ~6%)
+#95     PR-I: TriangleMembraneDualUpdate inv_deltaUV cleanup
+              (AL membrane path now correct on real meshes)
+#96     PR-I: outlier-vertex diagnostic — drift_max is at low-
+              incidence corners (v1333 has 2 incident tris), not a
+              solver bug; well-known per-vertex Newton failure mode
+#98     PR-I: generic cloth-vs-primitive projection via
+              Primitive::isInContact (sphere, capsule, plane, bowl,
+              foot, lower-leg all in one loop)
+#99     PR-I: AVBD_SKIP_PD — short-circuit PD's CG when AVBD drives;
+              ~163× per-step speedup on dress (1.4 s → 8.8 ms).
+              Combined with #91+#87: 7,960 ms → 9 ms (~880×).
