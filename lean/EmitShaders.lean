@@ -38,6 +38,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("triangle_bending_force", TriangleBendingForce.shader)
   , ("vbd_init",           VbdInit.shader)
   , ("vbd_solve_apply",    VbdSolveApply.shader)
+  , ("vbd_gather_spring",  VbdGatherSpring.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
