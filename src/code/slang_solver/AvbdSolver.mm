@@ -7,6 +7,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -15,9 +16,25 @@
 namespace cloth {
 
 // Matches the VbdInitParams struct emitted by Cloth.SlangCodegen.VbdInit
-// (single float field `invHSquared`).
+// (now includes `colorOffset` for coloring-aware dispatch).
 struct VbdInitParams {
     float invHSquared;
+    uint32_t colorOffset;
+};
+
+// Params for each of the 4 vbd_gather_* kernels — same single-uint
+// payload. setBytes per-dispatch captures these by value.
+struct VbdGatherParams {
+    uint32_t colorOffset;
+};
+
+// Matches the VbdSolveApplyParams struct emitted by
+// Cloth.SlangCodegen.VbdSolveApply (single uint colorOffset that
+// shifts the lane-to-vertex index lookup, supporting coloring-aware
+// dispatch). With colorOffset=0 and identity vertPerm the kernel is
+// bit-equivalent to the pre-coloring version.
+struct VbdSolveApplyParams {
+    uint32_t colorOffset;
 };
 
 struct AvbdSolver::Impl {
@@ -54,6 +71,25 @@ struct AvbdSolver::Impl {
     id<MTLBuffer> bufGScratch  = nil;   // length = 3 * nVerts (float)
     id<MTLBuffer> bufHScratch  = nil;   // length = 6 * nVerts (float)
     id<MTLBuffer> bufInitParams = nil;  // sizeof(VbdInitParams)
+
+    // Coloring-aware dispatch state. `bufVertPerm` is a permutation of
+    // [0..nVerts), grouped by color. `colorOffsets` (host-side) has
+    // length numColors+1: color k holds vertices
+    // vertPerm[colorOffsets[k] .. colorOffsets[k+1]). Default = single
+    // identity color (numColors=1, identity perm) — equivalent to
+    // pre-PR block Jacobi. uploadTriangles builds the real coloring
+    // from triangle adjacency.
+    id<MTLBuffer> bufVertPerm         = nil;
+    id<MTLBuffer> bufSolveApplyParams = nil;  // sizeof(VbdSolveApplyParams), kept for compat
+    uint32_t      numColors           = 1;
+    std::vector<uint32_t> colorOffsets;  // length numColors+1
+    // Cached for assembling the VbdInitParams payload per dispatch
+    // (the kernel struct now packs invHSquared + colorOffset). Set in
+    // setupMesh; never changes after.
+    float invHSqCached = 0.0f;
+    // True once buildVertexColoring has been called (lazily on first
+    // step() or stepColored()).
+    bool coloringBuilt = false;
 
     // Spring constraint buffers (allocated by uploadSprings).
     id<MTLBuffer> bufSpringP1Idx     = nil;  // uint per spring
@@ -131,6 +167,89 @@ struct AvbdSolver::Impl {
     bool ok = false;
     bool meshReady = false;
 
+    // Greedy first-fit vertex coloring on the conflict graph induced
+    // by all uploaded constraints (spring 2-clique, triangle 3-clique,
+    // bending 4-clique — attachment is 1-vert, contributes nothing).
+    // Two vertices share a color only if no constraint references both.
+    // Idempotent — early-returns if already built.
+    void buildVertexColoringIfNeeded() {
+        if (coloringBuilt) return;
+        const uint32_t nV = nVerts;
+
+        std::vector<std::vector<uint32_t>> adj(nV);
+        auto edge = [&](uint32_t a, uint32_t b) {
+            if (a == b) return;
+            adj[a].push_back(b);
+            adj[b].push_back(a);
+        };
+
+        if (nSprings > 0) {
+            auto* p1 = static_cast<const uint32_t*>(bufSpringP1Idx.contents);
+            auto* p2 = static_cast<const uint32_t*>(bufSpringP2Idx.contents);
+            for (uint32_t c = 0; c < nSprings; ++c) edge(p1[c], p2[c]);
+        }
+        if (nTri > 0) {
+            auto* idx = static_cast<const uint32_t*>(bufTriIdx.contents);
+            for (uint32_t c = 0; c < nTri; ++c) {
+                const uint32_t i0 = idx[3*c+0];
+                const uint32_t i1 = idx[3*c+1];
+                const uint32_t i2 = idx[3*c+2];
+                edge(i0, i1); edge(i0, i2); edge(i1, i2);
+            }
+        }
+        if (nBend > 0) {
+            auto* idx = static_cast<const uint32_t*>(bufBendIdx.contents);
+            for (uint32_t c = 0; c < nBend; ++c) {
+                const uint32_t i0 = idx[4*c+0];
+                const uint32_t i1 = idx[4*c+1];
+                const uint32_t i2 = idx[4*c+2];
+                const uint32_t i3 = idx[4*c+3];
+                edge(i0,i1); edge(i0,i2); edge(i0,i3);
+                edge(i1,i2); edge(i1,i3); edge(i2,i3);
+            }
+        }
+
+        std::vector<int32_t> color(nV, -1);
+        std::vector<bool> used;
+        for (uint32_t v = 0; v < nV; ++v) {
+            used.assign(adj[v].size() + 1, false);
+            for (uint32_t n : adj[v]) {
+                const int32_t cn = color[n];
+                if (cn >= 0 && uint32_t(cn) < used.size()) used[cn] = true;
+            }
+            uint32_t c = 0;
+            while (c < used.size() && used[c]) ++c;
+            color[v] = int32_t(c);
+        }
+
+        uint32_t nc = 0;
+        for (int32_t c : color) if (uint32_t(c + 1) > nc) nc = uint32_t(c + 1);
+        if (nc == 0) nc = 1;
+
+        std::vector<uint32_t> counts(nc, 0);
+        for (int32_t c : color) counts[uint32_t(c)]++;
+        std::vector<uint32_t> offsets(nc + 1, 0);
+        for (uint32_t c = 0; c < nc; ++c) offsets[c + 1] = offsets[c] + counts[c];
+
+        auto* perm = static_cast<uint32_t*>(bufVertPerm.contents);
+        std::vector<uint32_t> cursor(nc, 0);
+        for (uint32_t v = 0; v < nV; ++v) {
+            const uint32_t c = uint32_t(color[v]);
+            perm[offsets[c] + cursor[c]] = v;
+            cursor[c]++;
+        }
+
+        numColors = nc;
+        colorOffsets = std::move(offsets);
+        coloringBuilt = true;
+
+        std::printf("[avbd] vertex coloring: %u verts, %u colors\n", nV, nc);
+        for (uint32_t c = 0; c < nc; ++c) {
+            std::printf("[avbd]   color %2u: %u verts\n", c,
+                        colorOffsets[c + 1] - colorOffsets[c]);
+        }
+    }
+
     static id<MTLLibrary> loadLib(id<MTLDevice> dev, const std::string& path,
                                    const char* name) {
         NSError* err = nil;
@@ -183,19 +302,16 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     id<MTLLibrary> libBending    = Impl::loadLib(impl_->device, root + "vbd_gather_bending.metallib",   "vbd_gather_bending");
     id<MTLLibrary> libSolve      = Impl::loadLib(impl_->device, root + "vbd_solve_apply.metallib",      "vbd_solve_apply");
     id<MTLLibrary> libSpringForce         = Impl::loadLib(impl_->device, root + "spring_force.metallib",            "spring_force");
-    id<MTLLibrary> libAttachmentForce     = Impl::loadLib(impl_->device, root + "attachment_force.metallib",        "attachment_force");
     id<MTLLibrary> libAttachmentForceAl   = Impl::loadLib(impl_->device, root + "attachment_force_al.metallib",     "attachment_force_al");
     id<MTLLibrary> libAttachmentDualUpdate= Impl::loadLib(impl_->device, root + "attachment_dual_update.metallib",  "attachment_dual_update");
-    id<MTLLibrary> libTriMembraneForce       = Impl::loadLib(impl_->device, root + "triangle_membrane_force.metallib",        "triangle_membrane_force");
     id<MTLLibrary> libTriMembraneForceAl     = Impl::loadLib(impl_->device, root + "triangle_membrane_force_al.metallib",     "triangle_membrane_force_al");
     id<MTLLibrary> libTriMembraneDualUpdate  = Impl::loadLib(impl_->device, root + "triangle_membrane_dual_update.metallib",  "triangle_membrane_dual_update");
-    id<MTLLibrary> libTriBendingForce        = Impl::loadLib(impl_->device, root + "triangle_bending_force.metallib",         "triangle_bending_force");
     id<MTLLibrary> libTriBendingForceAl      = Impl::loadLib(impl_->device, root + "triangle_bending_force_al.metallib",      "triangle_bending_force_al");
     id<MTLLibrary> libTriBendingDualUpdate   = Impl::loadLib(impl_->device, root + "triangle_bending_dual_update.metallib",   "triangle_bending_dual_update");
     if (!libInit || !libSpring || !libAttachment || !libTriangle || !libBending || !libSolve ||
-        !libSpringForce || !libAttachmentForce || !libAttachmentForceAl ||
-        !libAttachmentDualUpdate || !libTriMembraneForce || !libTriMembraneForceAl ||
-        !libTriMembraneDualUpdate || !libTriBendingForce || !libTriBendingForceAl ||
+        !libSpringForce || !libAttachmentForceAl ||
+        !libAttachmentDualUpdate || !libTriMembraneForceAl ||
+        !libTriMembraneDualUpdate || !libTriBendingForceAl ||
         !libTriBendingDualUpdate) return;
 
     impl_->psoInit             = Impl::makePSO(impl_->device, libInit,       "main_0", "vbd_init");
@@ -205,22 +321,19 @@ AvbdSolver::AvbdSolver(const char* metallibPath)
     impl_->psoGatherBending    = Impl::makePSO(impl_->device, libBending,    "main_0", "vbd_gather_bending");
     impl_->psoSolveApply       = Impl::makePSO(impl_->device, libSolve,      "main_0", "vbd_solve_apply");
     impl_->psoSpringForce            = Impl::makePSO(impl_->device, libSpringForce,         "main_0", "spring_force");
-    impl_->psoAttachmentForce        = Impl::makePSO(impl_->device, libAttachmentForce,     "main_0", "attachment_force");
     impl_->psoAttachmentForceAl      = Impl::makePSO(impl_->device, libAttachmentForceAl,   "main_0", "attachment_force_al");
     impl_->psoAttachmentDualUpdate   = Impl::makePSO(impl_->device, libAttachmentDualUpdate,"main_0", "attachment_dual_update");
-    impl_->psoTriangleMembraneForce       = Impl::makePSO(impl_->device, libTriMembraneForce,       "main_0", "triangle_membrane_force");
     impl_->psoTriangleMembraneForceAl     = Impl::makePSO(impl_->device, libTriMembraneForceAl,     "main_0", "triangle_membrane_force_al");
     impl_->psoTriangleMembraneDualUpdate  = Impl::makePSO(impl_->device, libTriMembraneDualUpdate,  "main_0", "triangle_membrane_dual_update");
-    impl_->psoTriangleBendingForce        = Impl::makePSO(impl_->device, libTriBendingForce,        "main_0", "triangle_bending_force");
     impl_->psoTriangleBendingForceAl      = Impl::makePSO(impl_->device, libTriBendingForceAl,      "main_0", "triangle_bending_force_al");
     impl_->psoTriangleBendingDualUpdate   = Impl::makePSO(impl_->device, libTriBendingDualUpdate,   "main_0", "triangle_bending_dual_update");
     if (!impl_->psoInit || !impl_->psoGatherSpring || !impl_->psoGatherAttachment ||
         !impl_->psoGatherTriangle || !impl_->psoGatherBending || !impl_->psoSolveApply ||
-        !impl_->psoSpringForce || !impl_->psoAttachmentForce ||
+        !impl_->psoSpringForce ||
         !impl_->psoAttachmentForceAl || !impl_->psoAttachmentDualUpdate ||
-        !impl_->psoTriangleMembraneForce || !impl_->psoTriangleMembraneForceAl ||
+        !impl_->psoTriangleMembraneForceAl ||
         !impl_->psoTriangleMembraneDualUpdate ||
-        !impl_->psoTriangleBendingForce || !impl_->psoTriangleBendingForceAl ||
+        !impl_->psoTriangleBendingForceAl ||
         !impl_->psoTriangleBendingDualUpdate) return;
 
     impl_->ok = true;
@@ -278,10 +391,30 @@ void AvbdSolver::setupMesh(uint32_t nVerts,
     uploadVec3Padded(impl_->bufPredicted, predicted, nVerts);
 
     impl_->bufInitParams = [impl_->device newBufferWithLength:sizeof(VbdInitParams) options:opts];
-    *static_cast<VbdInitParams*>(impl_->bufInitParams.contents) = {invHSquared};
+    *static_cast<VbdInitParams*>(impl_->bufInitParams.contents) = {invHSquared, 0u};
+    impl_->invHSqCached = invHSquared;
+
+    // Default vertex permutation = identity (lane i → vertex i) and
+    // solve_apply colorOffset = 0. Equivalent to a single color spanning
+    // all vertices — same behavior as pre-coloring. buildVertexColoring()
+    // overwrites these with greedy first-fit when stepColored() runs.
+    const NSUInteger bytesPerm = nVerts * sizeof(uint32_t);
+    impl_->bufVertPerm = [impl_->device newBufferWithLength:bytesPerm options:opts];
+    uint32_t* perm = static_cast<uint32_t*>(impl_->bufVertPerm.contents);
+    for (uint32_t i = 0; i < nVerts; ++i) perm[i] = i;
+
+    impl_->bufSolveApplyParams = [impl_->device
+        newBufferWithLength:sizeof(VbdSolveApplyParams) options:opts];
+    static_cast<VbdSolveApplyParams*>(impl_->bufSolveApplyParams.contents)
+        ->colorOffset = 0u;
+
+    impl_->numColors = 1;
+    impl_->colorOffsets.assign({0u, nVerts});
+    impl_->coloringBuilt = false;
 
     impl_->meshReady = true;
 }
+
 
 void AvbdSolver::uploadSprings(uint32_t nSprings,
                                 const uint32_t* p1Idx,
@@ -521,140 +654,177 @@ void AvbdSolver::uploadBendings(uint32_t nBend,
 int AvbdSolver::step() {
     if (!ok() || !impl_->meshReady) return -1;
 
-    // PR-E slice 3: vbd_init + spring_force in one command buffer.
-    // Gather + solve_apply land in follow-up PRs once CSR adjacency
-    // is wired into the dispatch.
+    // Coloring-aware AVBD outer iter. For each color k:
+    //   1. vbd_init for color-k verts (g/H = inertial)
+    //   2. force kernels (constraint-indexed, full pass — they see the
+    //      latest positions, including updates from earlier colors in
+    //      this same iter)
+    //   3. gather kernels for color-k verts (write color-k g/H)
+    //   4. vbd_solve_apply for color-k verts (positions[v in C_k] += Δx)
+    // With numColors=1 + identity vertPerm (default state set by
+    // setupMesh), this is one full sweep equivalent to the pre-PR
+    // block-Jacobi behavior. When buildVertexColoringIfNeeded() has
+    // been called, the per-color loop gives true Gauss-Seidel.
     id<MTLCommandBuffer> cb = [impl_->queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
 
-    // 1. vbd_init: inertial term per vertex.
-    [enc setComputePipelineState:impl_->psoInit];
-    [enc setBuffer:impl_->bufInitParams offset:0 atIndex:0];
-    [enc setBuffer:impl_->bufPositions  offset:0 atIndex:1];
-    [enc setBuffer:impl_->bufPredicted  offset:0 atIndex:2];
-    [enc setBuffer:impl_->bufMass       offset:0 atIndex:3];
-    [enc setBuffer:impl_->bufGScratch   offset:0 atIndex:4];
-    [enc setBuffer:impl_->bufHScratch   offset:0 atIndex:5];
-    [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
-   threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    const uint32_t numColors = impl_->numColors;
+    for (uint32_t k = 0; k < numColors; ++k) {
+        const uint32_t offset = impl_->colorOffsets[k];
+        const uint32_t end    = impl_->colorOffsets[k + 1];
+        const uint32_t count  = end - offset;
+        if (count == 0) continue;
 
-    // 2. spring_force: per-spring force + GN Hessian into gradA/hess.
-    if (impl_->nSprings > 0) {
-        [enc setComputePipelineState:impl_->psoSpringForce];
-        [enc setBuffer:impl_->bufPositions       offset:0 atIndex:0];
-        [enc setBuffer:impl_->bufSpringP1Idx     offset:0 atIndex:1];
-        [enc setBuffer:impl_->bufSpringP2Idx     offset:0 atIndex:2];
-        [enc setBuffer:impl_->bufSpringRestLen   offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufSpringStiffness offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufSpringGradA     offset:0 atIndex:5];
-        [enc setBuffer:impl_->bufSpringHess      offset:0 atIndex:6];
-        [enc dispatchThreads:MTLSizeMake(impl_->nSprings, 1, 1)
+        // 1. vbd_init for color k.
+        [enc setComputePipelineState:impl_->psoInit];
+        {
+            VbdInitParams ip{impl_->invHSqCached, offset};
+            [enc setBytes:&ip length:sizeof(ip) atIndex:0];
+        }
+        [enc setBuffer:impl_->bufPositions  offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufPredicted  offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufMass       offset:0 atIndex:3];
+        [enc setBuffer:impl_->bufGScratch   offset:0 atIndex:4];
+        [enc setBuffer:impl_->bufHScratch   offset:0 atIndex:5];
+        [enc setBuffer:impl_->bufVertPerm   offset:0 atIndex:6];
+        [enc dispatchThreads:MTLSizeMake(count, 1, 1)
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
 
-        // 3. vbd_gather_spring: per-vertex gather of spring contributions
-        //    via CSR adjacency. Reads gradA/hess produced by step 2 and
-        //    accumulates into the gScratch/hScratch written by step 1.
-        [enc setComputePipelineState:impl_->psoGatherSpring];
-        [enc setBuffer:impl_->bufSpringGradA      offset:0 atIndex:0];
-        [enc setBuffer:impl_->bufSpringHess       offset:0 atIndex:1];
-        [enc setBuffer:impl_->bufVertSpringOffset offset:0 atIndex:2];
-        [enc setBuffer:impl_->bufVertSpringIdx    offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufVertSpringRole   offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufGScratch         offset:0 atIndex:5];
-        [enc setBuffer:impl_->bufHScratch         offset:0 atIndex:6];
-        [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
+        // 2a. spring_force (constraint-indexed).
+        if (impl_->nSprings > 0) {
+            [enc setComputePipelineState:impl_->psoSpringForce];
+            [enc setBuffer:impl_->bufPositions       offset:0 atIndex:0];
+            [enc setBuffer:impl_->bufSpringP1Idx     offset:0 atIndex:1];
+            [enc setBuffer:impl_->bufSpringP2Idx     offset:0 atIndex:2];
+            [enc setBuffer:impl_->bufSpringRestLen   offset:0 atIndex:3];
+            [enc setBuffer:impl_->bufSpringStiffness offset:0 atIndex:4];
+            [enc setBuffer:impl_->bufSpringGradA     offset:0 atIndex:5];
+            [enc setBuffer:impl_->bufSpringHess      offset:0 atIndex:6];
+            [enc dispatchThreads:MTLSizeMake(impl_->nSprings, 1, 1)
+           threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+
+            // 3a. vbd_gather_spring for color k.
+            [enc setComputePipelineState:impl_->psoGatherSpring];
+            [enc setBuffer:impl_->bufSpringGradA      offset:0 atIndex:0];
+            [enc setBuffer:impl_->bufSpringHess       offset:0 atIndex:1];
+            [enc setBuffer:impl_->bufVertSpringOffset offset:0 atIndex:2];
+            [enc setBuffer:impl_->bufVertSpringIdx    offset:0 atIndex:3];
+            [enc setBuffer:impl_->bufVertSpringRole   offset:0 atIndex:4];
+            [enc setBuffer:impl_->bufGScratch         offset:0 atIndex:5];
+            [enc setBuffer:impl_->bufHScratch         offset:0 atIndex:6];
+            [enc setBuffer:impl_->bufVertPerm         offset:0 atIndex:7];
+            {
+                VbdGatherParams gp{offset};
+                [enc setBytes:&gp length:sizeof(gp) atIndex:8];
+            }
+            [enc dispatchThreads:MTLSizeMake(count, 1, 1)
+           threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        }
+
+        // 2b/3b. attachment_force_al + vbd_gather_attachment.
+        if (impl_->nAttach > 0) {
+            [enc setComputePipelineState:impl_->psoAttachmentForceAl];
+            [enc setBuffer:impl_->bufPositions          offset:0 atIndex:0];
+            [enc setBuffer:impl_->bufAttachVertIdx      offset:0 atIndex:1];
+            [enc setBuffer:impl_->bufAttachFixedPos     offset:0 atIndex:2];
+            [enc setBuffer:impl_->bufAttachStiffness    offset:0 atIndex:3];
+            [enc setBuffer:impl_->bufAttachLambda       offset:0 atIndex:4];
+            [enc setBuffer:impl_->bufAttachGradV        offset:0 atIndex:5];
+            [enc setBuffer:impl_->bufAttachHessScalar   offset:0 atIndex:6];
+            [enc dispatchThreads:MTLSizeMake(impl_->nAttach, 1, 1)
+           threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+
+            [enc setComputePipelineState:impl_->psoGatherAttachment];
+            [enc setBuffer:impl_->bufAttachGradV        offset:0 atIndex:0];
+            [enc setBuffer:impl_->bufAttachHessScalar   offset:0 atIndex:1];
+            [enc setBuffer:impl_->bufVertAttachOffset   offset:0 atIndex:2];
+            [enc setBuffer:impl_->bufVertAttachIdx      offset:0 atIndex:3];
+            [enc setBuffer:impl_->bufGScratch           offset:0 atIndex:4];
+            [enc setBuffer:impl_->bufHScratch           offset:0 atIndex:5];
+            [enc setBuffer:impl_->bufVertPerm           offset:0 atIndex:6];
+            {
+                VbdGatherParams gp{offset};
+                [enc setBytes:&gp length:sizeof(gp) atIndex:7];
+            }
+            [enc dispatchThreads:MTLSizeMake(count, 1, 1)
+           threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        }
+
+        // 2c/3c. triangle_membrane_force_al + vbd_gather_triangle.
+        if (impl_->nTri > 0) {
+            [enc setComputePipelineState:impl_->psoTriangleMembraneForceAl];
+            [enc setBuffer:impl_->bufPositions      offset:0 atIndex:0];
+            [enc setBuffer:impl_->bufTriIdx         offset:0 atIndex:1];
+            [enc setBuffer:impl_->bufTriStiffness   offset:0 atIndex:2];
+            [enc setBuffer:impl_->bufTriLambda0     offset:0 atIndex:3];
+            [enc setBuffer:impl_->bufTriLambda1     offset:0 atIndex:4];
+            [enc setBuffer:impl_->bufTriGrad        offset:0 atIndex:5];
+            [enc setBuffer:impl_->bufTriHessScalar  offset:0 atIndex:6];
+            [enc setBuffer:impl_->bufTriInvUV       offset:0 atIndex:7];
+            [enc dispatchThreads:MTLSizeMake(impl_->nTri, 1, 1)
+           threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+
+            [enc setComputePipelineState:impl_->psoGatherTriangle];
+            [enc setBuffer:impl_->bufTriGrad        offset:0 atIndex:0];
+            [enc setBuffer:impl_->bufTriHessScalar  offset:0 atIndex:1];
+            [enc setBuffer:impl_->bufVertTriOffset  offset:0 atIndex:2];
+            [enc setBuffer:impl_->bufVertTriIdx     offset:0 atIndex:3];
+            [enc setBuffer:impl_->bufVertTriRole    offset:0 atIndex:4];
+            [enc setBuffer:impl_->bufGScratch       offset:0 atIndex:5];
+            [enc setBuffer:impl_->bufHScratch       offset:0 atIndex:6];
+            [enc setBuffer:impl_->bufVertPerm       offset:0 atIndex:7];
+            {
+                VbdGatherParams gp{offset};
+                [enc setBytes:&gp length:sizeof(gp) atIndex:8];
+            }
+            [enc dispatchThreads:MTLSizeMake(count, 1, 1)
+           threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        }
+
+        // 2d/3d. triangle_bending_force_al + vbd_gather_bending.
+        if (impl_->nBend > 0) {
+            [enc setComputePipelineState:impl_->psoTriangleBendingForceAl];
+            [enc setBuffer:impl_->bufPositions       offset:0 atIndex:0];
+            [enc setBuffer:impl_->bufBendIdx         offset:0 atIndex:1];
+            [enc setBuffer:impl_->bufBendWeight      offset:0 atIndex:2];
+            [enc setBuffer:impl_->bufBendNTarget     offset:0 atIndex:3];
+            [enc setBuffer:impl_->bufBendStiffness   offset:0 atIndex:4];
+            [enc setBuffer:impl_->bufBendLambda      offset:0 atIndex:5];
+            [enc setBuffer:impl_->bufBendGrad        offset:0 atIndex:6];
+            [enc setBuffer:impl_->bufBendHessScalar  offset:0 atIndex:7];
+            [enc dispatchThreads:MTLSizeMake(impl_->nBend, 1, 1)
+           threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+
+            [enc setComputePipelineState:impl_->psoGatherBending];
+            [enc setBuffer:impl_->bufBendGrad        offset:0 atIndex:0];
+            [enc setBuffer:impl_->bufBendHessScalar  offset:0 atIndex:1];
+            [enc setBuffer:impl_->bufVertBendOffset  offset:0 atIndex:2];
+            [enc setBuffer:impl_->bufVertBendIdx     offset:0 atIndex:3];
+            [enc setBuffer:impl_->bufVertBendRole    offset:0 atIndex:4];
+            [enc setBuffer:impl_->bufGScratch        offset:0 atIndex:5];
+            [enc setBuffer:impl_->bufHScratch        offset:0 atIndex:6];
+            [enc setBuffer:impl_->bufVertPerm        offset:0 atIndex:7];
+            {
+                VbdGatherParams gp{offset};
+                [enc setBytes:&gp length:sizeof(gp) atIndex:8];
+            }
+            [enc dispatchThreads:MTLSizeMake(count, 1, 1)
+           threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        }
+
+        // 4. vbd_solve_apply for color k.
+        [enc setComputePipelineState:impl_->psoSolveApply];
+        [enc setBuffer:impl_->bufGScratch  offset:0 atIndex:0];
+        [enc setBuffer:impl_->bufHScratch  offset:0 atIndex:1];
+        [enc setBuffer:impl_->bufPositions offset:0 atIndex:2];
+        [enc setBuffer:impl_->bufVertPerm  offset:0 atIndex:3];
+        {
+            VbdSolveApplyParams sp{offset};
+            [enc setBytes:&sp length:sizeof(sp) atIndex:4];
+        }
+        [enc dispatchThreads:MTLSizeMake(count, 1, 1)
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     }
-
-    // 4. attachment_force_al + vbd_gather_attachment (if nAttach > 0).
-    //    AL force kernel includes accumulated dual multiplier λ in the
-    //    gradient — with λ initialized to zero the behavior matches
-    //    the non-AL kernel exactly; once stepDualAttachments() starts
-    //    ramping λ this drives oscillation away.
-    if (impl_->nAttach > 0) {
-        [enc setComputePipelineState:impl_->psoAttachmentForceAl];
-        [enc setBuffer:impl_->bufPositions          offset:0 atIndex:0];
-        [enc setBuffer:impl_->bufAttachVertIdx      offset:0 atIndex:1];
-        [enc setBuffer:impl_->bufAttachFixedPos     offset:0 atIndex:2];
-        [enc setBuffer:impl_->bufAttachStiffness    offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufAttachLambda       offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufAttachGradV        offset:0 atIndex:5];
-        [enc setBuffer:impl_->bufAttachHessScalar   offset:0 atIndex:6];
-        [enc dispatchThreads:MTLSizeMake(impl_->nAttach, 1, 1)
-       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
-
-        [enc setComputePipelineState:impl_->psoGatherAttachment];
-        [enc setBuffer:impl_->bufAttachGradV        offset:0 atIndex:0];
-        [enc setBuffer:impl_->bufAttachHessScalar   offset:0 atIndex:1];
-        [enc setBuffer:impl_->bufVertAttachOffset   offset:0 atIndex:2];
-        [enc setBuffer:impl_->bufVertAttachIdx      offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufGScratch           offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufHScratch           offset:0 atIndex:5];
-        [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
-       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
-    }
-
-    // 5. triangle_membrane_force_al + vbd_gather_triangle (if nTri > 0).
-    //    AL force kernel adds λ_col0/λ_col1 to per-vertex gradient.
-    //    With λ=0 initial it's bit-equivalent to the non-AL kernel.
-    if (impl_->nTri > 0) {
-        [enc setComputePipelineState:impl_->psoTriangleMembraneForceAl];
-        [enc setBuffer:impl_->bufPositions      offset:0 atIndex:0];
-        [enc setBuffer:impl_->bufTriIdx         offset:0 atIndex:1];
-        [enc setBuffer:impl_->bufTriStiffness   offset:0 atIndex:2];
-        [enc setBuffer:impl_->bufTriLambda0     offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufTriLambda1     offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufTriGrad        offset:0 atIndex:5];
-        [enc setBuffer:impl_->bufTriHessScalar  offset:0 atIndex:6];
-        [enc setBuffer:impl_->bufTriInvUV       offset:0 atIndex:7];
-        [enc dispatchThreads:MTLSizeMake(impl_->nTri, 1, 1)
-       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
-
-        [enc setComputePipelineState:impl_->psoGatherTriangle];
-        [enc setBuffer:impl_->bufTriGrad        offset:0 atIndex:0];
-        [enc setBuffer:impl_->bufTriHessScalar  offset:0 atIndex:1];
-        [enc setBuffer:impl_->bufVertTriOffset  offset:0 atIndex:2];
-        [enc setBuffer:impl_->bufVertTriIdx     offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufVertTriRole    offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufGScratch       offset:0 atIndex:5];
-        [enc setBuffer:impl_->bufHScratch       offset:0 atIndex:6];
-        [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
-       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
-    }
-
-    // 6. triangle_bending_force_al + vbd_gather_bending (if nBend > 0).
-    if (impl_->nBend > 0) {
-        [enc setComputePipelineState:impl_->psoTriangleBendingForceAl];
-        [enc setBuffer:impl_->bufPositions       offset:0 atIndex:0];
-        [enc setBuffer:impl_->bufBendIdx         offset:0 atIndex:1];
-        [enc setBuffer:impl_->bufBendWeight      offset:0 atIndex:2];
-        [enc setBuffer:impl_->bufBendNTarget     offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufBendStiffness   offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufBendLambda      offset:0 atIndex:5];
-        [enc setBuffer:impl_->bufBendGrad        offset:0 atIndex:6];
-        [enc setBuffer:impl_->bufBendHessScalar  offset:0 atIndex:7];
-        [enc dispatchThreads:MTLSizeMake(impl_->nBend, 1, 1)
-       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
-
-        [enc setComputePipelineState:impl_->psoGatherBending];
-        [enc setBuffer:impl_->bufBendGrad        offset:0 atIndex:0];
-        [enc setBuffer:impl_->bufBendHessScalar  offset:0 atIndex:1];
-        [enc setBuffer:impl_->bufVertBendOffset  offset:0 atIndex:2];
-        [enc setBuffer:impl_->bufVertBendIdx     offset:0 atIndex:3];
-        [enc setBuffer:impl_->bufVertBendRole    offset:0 atIndex:4];
-        [enc setBuffer:impl_->bufGScratch        offset:0 atIndex:5];
-        [enc setBuffer:impl_->bufHScratch        offset:0 atIndex:6];
-        [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
-       threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
-    }
-
-    // 7. vbd_solve_apply: invert 3x3 H, write positions += -H⁻¹ g.
-    [enc setComputePipelineState:impl_->psoSolveApply];
-    [enc setBuffer:impl_->bufGScratch  offset:0 atIndex:0];
-    [enc setBuffer:impl_->bufHScratch  offset:0 atIndex:1];
-    [enc setBuffer:impl_->bufPositions offset:0 atIndex:2];
-    [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
-   threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
 
     [enc endEncoding];
     [cb commit];
@@ -750,6 +920,11 @@ int AvbdSolver::stepDualBending() {
     [cb commit];
     [cb waitUntilCompleted];
     return 0;
+}
+
+void AvbdSolver::buildColoring() {
+    if (!ok() || !impl_->meshReady) return;
+    impl_->buildVertexColoringIfNeeded();
 }
 
 void AvbdSolver::readPositions(std::vector<float>& positions_out) const {

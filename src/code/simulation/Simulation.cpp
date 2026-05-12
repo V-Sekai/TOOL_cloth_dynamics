@@ -3544,6 +3544,17 @@ void Simulation::initializePrefactoredMatrices() {
 					std::printf("[avbd] γ scaled by %g (AVBD_AL_GAMMA env)\n", gscale);
 				}
 
+				// AVBD_COLORS=1 builds greedy first-fit vertex coloring
+				// from all uploaded constraints. After this, step()
+				// dispatches each kernel per color, giving real
+				// Gauss-Seidel semantics (the fix for the block-Jacobi
+				// divergence diagnosed in PRs #90). Without it, AvbdSolver
+				// stays at numColors=1 + identity perm — bit-identical to
+				// pre-coloring block-Jacobi behavior.
+				if (std::getenv("AVBD_COLORS") != nullptr) {
+					avbd->buildColoring();
+				}
+
 				sysMat[sysMatId].avbd = avbd;
 				std::printf("[avbd] AvbdSolver loaded + uploaded "
 				            "(nVerts=%u, nSprings=%u, nTri=%u, nAttach=%u, nBend=%u, h=%g, invH²=%g)\n",

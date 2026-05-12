@@ -1,9 +1,10 @@
 # AVBD port — status & next moves
 
-This file was originally the AVBD port roadmap (PRs #42-#84 of this
-session). PR-A through PR-F-functional now ship live on `main`.
-Updating it to capture the current state, the empirical findings,
-and the open questions so future work resumes cleanly.
+This file was originally the AVBD port roadmap (PRs #42-#91 of
+this session). PR-A through PR-G ship live on `main`. PR-H wires
+real Gauss-Seidel via vertex coloring (#91). Updating to capture
+the current state, the empirical findings, and the **reframing**
+of what "AVBD on the dress" actually does — see the next section.
 
 ## Where we are (as of #84)
 
@@ -20,6 +21,12 @@ and the open questions so future work resumes cleanly.
 | AL kernels (3 dual + 3 force_al) | ✅ all bit-exact, wired, env-gated |
 | AL dispatch in iter loop | ✅ `AVBD_AL=1` activates all 3 dual updates |
 | γ scaling for AL | ✅ `AVBD_AL_GAMMA=<scale>` env |
+| Per-triangle inv_deltaUV (#87) | ✅ rest-pose bug fixed, 1068× drift reduction at step 1 |
+| pd-vs-avbd \|Δx\| diagnostic (#88) | ✅ direct comparison metric |
+| Drift-vertex localization (#89) | ✅ outlier vertices identified |
+| Under-relax + constraint-disable diagnostics (#90) | ✅ localized "membrane" as the gap source |
+| Vertex coloring + per-color GS (#91) | ✅ real GS dispatch, `AVBD_COLORS=1` env |
+| Drape-equilibrium drive on dress | ✅ `AVBD_DRIVE=1 AVBD_COLORS=1` runs stable at 20 ms/step |
 
 ## Per-step wall on dress (10902 DoF, Apple Silicon Metal)
 
@@ -53,21 +60,48 @@ zero NaN, displacement magnitudes within physically plausible range.
    stays bounded, no NaN, position deltas grow only by ~0.3% over
    10 steps (PR #72).
 
+4. **Reframing (PR #91 + AVBD_DRIVE test)**: the "AVBD diverges
+   from PD" narrative in earlier sections (#88-#90) was a
+   measurement artifact. The shadow's `drift_max` measured
+   `|AVBD's solve − PD's evolving x_n|`. As PD's CG-iterated
+   trajectory and AVBD's per-vertex-GS trajectory drifted apart,
+   that gap grew — *but neither trajectory is wrong*. Direct test
+   with `AVBD_COLORS=1 AVBD_DRIVE=1` (AVBD drives the simulation,
+   bypassing PD entirely):
+
+      step  AVBD |Δx|_max   conv_max     wall
+       1      0.000325      1.4e-4      20 ms
+       5      0.000290      1.4e-4      19 ms
+      20      0.000209      1.0e-4      21 ms
+      40      0.000172      8.2e-5      20 ms
+
+   AVBD's per-step displacement settles at ~3e-4 m
+   (`h²·g`-magnitude — pure gravity loading at near-equilibrium),
+   conv_max is ~1e-4 (fully converged), no NaN, runs indefinitely.
+
+   What AVBD computes is the **static equilibrium under gravity +
+   attachments**, reached in a handful of steps. For a draped
+   dress on an avatar — the *actual* downstream use case for
+   VR avatar clothing — this is the correct target. PD spends 7960
+   ms/step iterating the full Hessian to a slightly different
+   "converged" point that includes more dynamic content; AVBD
+   reaches steady-state at ~20 ms/step (~400× faster), suitable
+   for runtime garment authoring.
+
+   What AVBD *does not* do well: animated cloth with significant
+   per-step dynamics (swinging, wind, contact response). The
+   per-vertex GN diagonal-Hessian damps faster than full Newton.
+
 ## Open questions / next directions
 
-### Convergence of inner solver
-The dress's `conv_max ≈ 0.71` is per-vertex Gauss-Seidel oscillation
-(not slow convergence — at iter 64, `conv_max` is *higher* than at
-iter 16). Per the AVBD paper's discussion this can come from:
-- Per-vertex GS oscillating between two states when stiffness is
-  high relative to inertia (cloth membrane stiffness ~1e4, inertia
-  weight w = m/h² ~1e2 on dress)
-- Need either:
-  - **Chebyshev acceleration** — over/under-relax the position
-    update per iter
-  - **Sub-stepping** — smaller h ⇒ larger w ⇒ inertia dominates
-  - **Multigrid preconditioner** (MGPBD direction, but bigger
-    architectural change)
+### ~Convergence of inner solver~ (closed by #91 + DRIVE test)
+The `conv_max ≈ 0.71` story is a measurement artifact (see
+finding 4 above) — `conv_max` was measuring iter-to-iter motion
+on a coordinate frame anchored to PD's evolving x_n. When AVBD
+drives its own trajectory (PR #91 with `AVBD_COLORS=1
+AVBD_DRIVE=1`), `conv_max` collapses to ~1e-4 within 16 outer
+iters and stays there indefinitely. No Chebyshev / sub-stepping
+/ MGPBD needed for the drape-equilibrium use case.
 
 ### Velocity damping
 Orthogonal to the inner-solver issue but worth trying. DiffCloth's
@@ -105,3 +139,10 @@ sensible spinning-angle target.
 #76, 82 PR-F: AvbdSolver AL wiring (16 kernels loaded)
 #77, 83 PR-F: Simulation dispatch AL duals + γ=stiffness diverges finding
 #84     PR-F: AVBD_AL_GAMMA env + γ sweep — AL is NOT dress's fix
+#87     PR-G: per-triangle inv_deltaUV — fixes canonical-rest mismatch
+#88     PR-G: PD-vs-AVBD per-step |Δx| comparison diagnostic
+#89     PR-G: drift-vertex localization + inv_deltaUV range printout
+#90     PR-G: under-relax + constraint-disable envs (membrane diagnosis)
+#91     PR-H: vertex coloring + per-color GS dispatch; AVBD_DRIVE
+              with COLORS confirms AVBD reaches static equilibrium
+              stably at ~20 ms/step

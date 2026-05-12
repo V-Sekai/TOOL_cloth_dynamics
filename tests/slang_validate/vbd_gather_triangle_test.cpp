@@ -57,6 +57,13 @@ int main() {
     std::vector<Vector<float, 3>> gScratch(GROUP_SIZE, Vector<float, 3>(0.0f));
     std::vector<float>            hScratch(6 * GROUP_SIZE, 0.0f);
 
+    // Identity vertex permutation + zero color offset — same lane-to-vert
+    // mapping as the pre-coloring version, so reference math is bit-exact.
+    std::vector<uint32_t> vertPerm(GROUP_SIZE);
+    for (uint32_t i = 0; i < GROUP_SIZE; ++i) vertPerm[i] = i;
+    VbdGatherTriangleParams_0 paramsBuf{};
+    paramsBuf.colorOffset_0 = 0u;
+
     GlobalParams_0 gp{};
     gp.triGrad_0.data       = triGrad.data();       gp.triGrad_0.count       = triGrad.size();
     gp.triHessScalar_0.data = triHessScalar.data(); gp.triHessScalar_0.count = triHessScalar.size();
@@ -65,6 +72,8 @@ int main() {
     gp.vertTriRole_0.data   = vertTriRole.data();   gp.vertTriRole_0.count   = vertTriRole.size();
     gp.gScratch_0.data      = gScratch.data();      gp.gScratch_0.count      = gScratch.size();
     gp.hScratch_0.data      = hScratch.data();      gp.hScratch_0.count      = hScratch.size();
+    gp.vertPerm_0.data      = vertPerm.data();      gp.vertPerm_0.count      = vertPerm.size();
+    gp.params_0             = &paramsBuf;
 
     ComputeVaryingInput vi{};
     vi.startGroupID = uint3(0, 0, 0);

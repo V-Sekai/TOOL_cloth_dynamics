@@ -92,7 +92,11 @@ private def loopBody : List SlangStmt :=
   ]
 
 private def body : List SlangStmt :=
-  [ .declInit u  "v"      (.member (.var "tid") "x")
+  [ .declInit u  "lane"   (.member (.var "tid") "x")
+  , .declInit u  "v"
+      (.index (.var "vertPerm")
+        (.bin "+" (.var "lane")
+                  (.member (.var "params") "colorOffset")))
   , .declInit u  "sStart" (.index (.var "vertSpringOffset") (.var "v"))
   , .declInit u  "sEnd"   (.index (.var "vertSpringOffset")
                             (.bin "+" (.var "v") (.litUint 1)))
@@ -119,7 +123,10 @@ private def body : List SlangStmt :=
   ]
 
 def shader : SlangShaderModule :=
-  { globals :=
+  { structs :=
+      [ { name := "VbdGatherSpringParams"
+        , fields := [⟨"colorOffset", u, Semantic.none, none, none, .qIn⟩] } ]
+  , globals :=
       [ bnd 0 "springGradA"      (.roBuf f3)
       , bnd 1 "springHess"       (.roBuf f)
       , bnd 2 "vertSpringOffset" (.roBuf u)
@@ -127,6 +134,8 @@ def shader : SlangShaderModule :=
       , bnd 4 "vertSpringRole"   (.roBuf u)
       , bnd 5 "gScratch"         (.rwBuf f3)
       , bnd 6 "hScratch"         (.rwBuf f)
+      , bnd 7 "vertPerm"         (.roBuf u)
+      , ⟨"params", .const "VbdGatherSpringParams", Semantic.none, some 8, some 0, .qIn⟩
       ]
   , functions := [{
       attrs  := [.shaderCompute, .numthreads 64 1 1]
@@ -138,7 +147,11 @@ def shader : SlangShaderModule :=
     }] }
 
 def expected : String :=
-"[[vk::binding(0, 0)]]
+"struct VbdGatherSpringParams {
+  uint colorOffset;
+};
+
+[[vk::binding(0, 0)]]
 StructuredBuffer<float3> springGradA;
 [[vk::binding(1, 0)]]
 StructuredBuffer<float> springHess;
@@ -152,10 +165,15 @@ StructuredBuffer<uint> vertSpringRole;
 RWStructuredBuffer<float3> gScratch;
 [[vk::binding(6, 0)]]
 RWStructuredBuffer<float> hScratch;
+[[vk::binding(7, 0)]]
+StructuredBuffer<uint> vertPerm;
+[[vk::binding(8, 0)]]
+ConstantBuffer<VbdGatherSpringParams> params;
 
 [shader(\"compute\")] [numthreads(64, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID) {
-  uint v = tid.x;
+  uint lane = tid.x;
+  uint v = vertPerm[(lane + params.colorOffset)];
   uint sStart = vertSpringOffset[v];
   uint sEnd = vertSpringOffset[(v + 1u)];
   uint hb = (6u * v);

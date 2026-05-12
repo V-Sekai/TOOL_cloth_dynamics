@@ -57,7 +57,11 @@ private def u  : SlangType := .scalar .uint
 private def f  : SlangType := .scalar .float
 
 private def body : List SlangStmt :=
-  [ .declInit u  "v"   (.member (.var "tid") "x")
+  [ .declInit u  "lane" (.member (.var "tid") "x")
+  , .declInit u  "v"
+      (.index (.var "vertPerm")
+        (.bin "+" (.var "lane")
+                  (.member (.var "params") "colorOffset")))
   , .declInit u  "hb"  (.bin "*" (.litUint 6) (.var "v"))
   , .declInit f3 "g"   (.index (.var "gScratch") (.var "v"))
   , .declInit f  "Hxx" (.index (.var "hScratch") (.var "hb"))
@@ -124,10 +128,15 @@ private def bnd (n : Nat) (name : String) (t : SlangType) : SlangBinding :=
   , binding := some n, space := some 0 }
 
 def shader : SlangShaderModule :=
-  { globals :=
-      [ bnd 0 "gScratch"  (.roBuf f3)
-      , bnd 1 "hScratch"  (.roBuf f)
-      , bnd 2 "positions" (.rwBuf f3)
+  { structs :=
+      [ { name := "VbdSolveApplyParams"
+        , fields := [⟨"colorOffset", u, Semantic.none, none, none, .qIn⟩] } ]
+  , globals :=
+      [ ⟨"gScratch",  .roBuf f3,                Semantic.none, some 0, some 0, .qIn⟩
+      , ⟨"hScratch",  .roBuf f,                 Semantic.none, some 1, some 0, .qIn⟩
+      , ⟨"positions", .rwBuf f3,                Semantic.none, some 2, some 0, .qIn⟩
+      , ⟨"vertPerm",  .roBuf u,                 Semantic.none, some 3, some 0, .qIn⟩
+      , ⟨"params",    .const "VbdSolveApplyParams", Semantic.none, some 4, some 0, .qIn⟩
       ]
   , functions := [{
       attrs  := [.shaderCompute, .numthreads 64 1 1]
@@ -139,16 +148,25 @@ def shader : SlangShaderModule :=
     }] }
 
 def expected : String :=
-"[[vk::binding(0, 0)]]
+"struct VbdSolveApplyParams {
+  uint colorOffset;
+};
+
+[[vk::binding(0, 0)]]
 StructuredBuffer<float3> gScratch;
 [[vk::binding(1, 0)]]
 StructuredBuffer<float> hScratch;
 [[vk::binding(2, 0)]]
 RWStructuredBuffer<float3> positions;
+[[vk::binding(3, 0)]]
+StructuredBuffer<uint> vertPerm;
+[[vk::binding(4, 0)]]
+ConstantBuffer<VbdSolveApplyParams> params;
 
 [shader(\"compute\")] [numthreads(64, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID) {
-  uint v = tid.x;
+  uint lane = tid.x;
+  uint v = vertPerm[(lane + params.colorOffset)];
   uint hb = (6u * v);
   float3 g = gScratch[v];
   float Hxx = hScratch[hb];

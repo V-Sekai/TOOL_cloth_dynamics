@@ -34,6 +34,7 @@ int main() {
 
     VbdInitParams_0 params{};
     params.invHSquared_0 = 2.0f;
+    params.colorOffset_0 = 0u;
 
     std::vector<Vector<float, 3>> positions(GROUP_SIZE, Vector<float, 3>(0.0f));
     std::vector<Vector<float, 3>> predicted(GROUP_SIZE, Vector<float, 3>(0.0f));
@@ -49,6 +50,11 @@ int main() {
     predicted[1] = Vector<float, 3>(5.0f, 5.0f, 5.0f);
     mass[1]      = 1.0f;
 
+    // Identity vertex permutation + zero color offset — same lane-to-vert
+    // mapping as the pre-coloring version, so reference math is bit-exact.
+    std::vector<uint32_t> vertPerm(GROUP_SIZE);
+    for (uint32_t i = 0; i < GROUP_SIZE; ++i) vertPerm[i] = i;
+
     GlobalParams_0 gp{};
     gp.params_0       = &params;
     gp.positions_0.data = positions.data(); gp.positions_0.count = positions.size();
@@ -56,6 +62,7 @@ int main() {
     gp.mass_0.data      = mass.data();      gp.mass_0.count      = mass.size();
     gp.gScratch_0.data  = gScratch.data();  gp.gScratch_0.count  = gScratch.size();
     gp.hScratch_0.data  = hScratch.data();  gp.hScratch_0.count  = hScratch.size();
+    gp.vertPerm_0.data  = vertPerm.data();  gp.vertPerm_0.count  = vertPerm.size();
 
     ComputeVaryingInput vi{};
     vi.startGroupID = uint3(0, 0, 0);

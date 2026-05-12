@@ -67,6 +67,13 @@ int main() {
     hScratch[0]  = 100.0f; hScratch[3]  = 100.0f; hScratch[5]  = 100.0f;
     hScratch[6]  = 200.0f; hScratch[9]  = 200.0f; hScratch[11] = 200.0f;
 
+    // Identity vertex permutation + zero color offset — same lane-to-vert
+    // mapping as the pre-coloring version, so reference math is bit-exact.
+    std::vector<uint32_t> vertPerm(GROUP_SIZE);
+    for (uint32_t i = 0; i < GROUP_SIZE; ++i) vertPerm[i] = i;
+    VbdGatherSpringParams_0 paramsBuf{};
+    paramsBuf.colorOffset_0 = 0u;
+
     GlobalParams_0 gp{};
     gp.springGradA_0.data      = springGradA.data();      gp.springGradA_0.count      = springGradA.size();
     gp.springHess_0.data       = springHess.data();       gp.springHess_0.count       = springHess.size();
@@ -75,6 +82,8 @@ int main() {
     gp.vertSpringRole_0.data   = vertSpringRole.data();   gp.vertSpringRole_0.count   = vertSpringRole.size();
     gp.gScratch_0.data         = gScratch.data();         gp.gScratch_0.count         = gScratch.size();
     gp.hScratch_0.data         = hScratch.data();         gp.hScratch_0.count         = hScratch.size();
+    gp.vertPerm_0.data         = vertPerm.data();         gp.vertPerm_0.count         = vertPerm.size();
+    gp.params_0                = &paramsBuf;
 
     ComputeVaryingInput vi{};
     vi.startGroupID = uint3(0, 0, 0);

@@ -68,7 +68,11 @@ private def loopBody : List SlangStmt :=
   ]
 
 private def body : List SlangStmt :=
-  [ .declInit u  "v"      (.member (.var "tid") "x")
+  [ .declInit u  "lane"   (.member (.var "tid") "x")
+  , .declInit u  "v"
+      (.index (.var "vertPerm")
+        (.bin "+" (.var "lane")
+                  (.member (.var "params") "colorOffset")))
   , .declInit u  "sStart" (.index (.var "vertBendOffset") (.var "v"))
   , .declInit u  "sEnd"   (.index (.var "vertBendOffset")
                             (.bin "+" (.var "v") (.litUint 1)))
@@ -89,7 +93,10 @@ private def body : List SlangStmt :=
   ]
 
 def shader : SlangShaderModule :=
-  { globals :=
+  { structs :=
+      [ { name := "VbdGatherBendingParams"
+        , fields := [⟨"colorOffset", u, Semantic.none, none, none, .qIn⟩] } ]
+  , globals :=
       [ bnd 0 "bendGrad"        (.roBuf f3)
       , bnd 1 "bendHessScalar"  (.roBuf f)
       , bnd 2 "vertBendOffset"  (.roBuf u)
@@ -97,6 +104,8 @@ def shader : SlangShaderModule :=
       , bnd 4 "vertBendRole"    (.roBuf u)
       , bnd 5 "gScratch"        (.rwBuf f3)
       , bnd 6 "hScratch"        (.rwBuf f)
+      , bnd 7 "vertPerm"        (.roBuf u)
+      , ⟨"params", .const "VbdGatherBendingParams", Semantic.none, some 8, some 0, .qIn⟩
       ]
   , functions := [{
       attrs  := [.shaderCompute, .numthreads 64 1 1]
@@ -108,7 +117,11 @@ def shader : SlangShaderModule :=
     }] }
 
 def expected : String :=
-"[[vk::binding(0, 0)]]
+"struct VbdGatherBendingParams {
+  uint colorOffset;
+};
+
+[[vk::binding(0, 0)]]
 StructuredBuffer<float3> bendGrad;
 [[vk::binding(1, 0)]]
 StructuredBuffer<float> bendHessScalar;
@@ -122,10 +135,15 @@ StructuredBuffer<uint> vertBendRole;
 RWStructuredBuffer<float3> gScratch;
 [[vk::binding(6, 0)]]
 RWStructuredBuffer<float> hScratch;
+[[vk::binding(7, 0)]]
+StructuredBuffer<uint> vertPerm;
+[[vk::binding(8, 0)]]
+ConstantBuffer<VbdGatherBendingParams> params;
 
 [shader(\"compute\")] [numthreads(64, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID) {
-  uint v = tid.x;
+  uint lane = tid.x;
+  uint v = vertPerm[(lane + params.colorOffset)];
   uint sStart = vertBendOffset[v];
   uint sEnd = vertBendOffset[(v + 1u)];
   uint hb = (6u * v);

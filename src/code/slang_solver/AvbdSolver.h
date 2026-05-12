@@ -157,6 +157,16 @@ public:
     // undefined.
     void updateState(const float* positions, const float* predicted);
 
+    // Build greedy first-fit vertex coloring from all uploaded
+    // constraints' incidence graphs (spring 2-clique, triangle
+    // 3-clique, bending 4-clique). After this call, step() dispatches
+    // each kernel per color, giving real Gauss-Seidel semantics
+    // across vertices within an iter. Idempotent — safe to call after
+    // each upload* method or just once before the first step().
+    // Without it, step() runs as a single Jacobi sweep (numColors=1 +
+    // identity vertPerm = pre-coloring behavior).
+    void buildColoring();
+
     // Read back current vertex positions to a host array. Used by tests.
     // `positions_out` length = 3 * nVerts (xyz).
     void readPositions(std::vector<float>& positions_out) const;
