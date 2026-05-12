@@ -1952,8 +1952,21 @@ void Simulation::step() {
 					if (dist >= 0.0) continue;  // surface or outside
 					particles[i].pos -= dist * normal;
 					const double vn = particles[i].velocity.dot(normal);
-					if (vn < 0)
+					if (vn < 0) {
 						particles[i].velocity -= vn * normal;
+						// CHI-112: tangential friction damping. μ ∈ [0,1] —
+						// 0 = perfect slip, 1 = full stick. Approximation
+						// of Coulomb friction: scales tangent velocity by
+						// (1 − μ) instead of clamping to a force cone.
+						// Good enough for sphere demo's inverse design;
+						// gives a non-zero ∂trajectory/∂μ that LBFGS-B can
+						// optimise.
+						if (p->mu > 0.0) {
+							Vec3d v_tan = particles[i].velocity;
+							const double clip = std::min(1.0, p->mu);
+							particles[i].velocity = (1.0 - clip) * v_tan;
+						}
+					}
 					++projHits;
 				}
 			}
@@ -2540,6 +2553,25 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 			ret.dL_dxfixed_accum[dstBase + 0] = g.dL_dxfixed[srcBase + 0];
 			ret.dL_dxfixed_accum[dstBase + 1] = g.dL_dxfixed[srcBase + 1];
 			ret.dL_dxfixed_accum[dstBase + 2] = g.dL_dxfixed[srcBase + 2];
+		}
+	}
+
+	// CHI-112: friction (μ) cotangent. Re-uses PD's `calculatedr_dmu`
+	// which derives ∂r/∂μ from the per-step collision info. The chain
+	// is dL/dμ_i = h · (∂r/∂μ_i)^T · dL/dx_new — same shape as PD's
+	// (Simulation.cpp:2265+), with `u_star` replaced by `dL_dx_new`
+	// (AVBD's per-step upstream cotangent).
+	if (taskInfo.dL_dmu && !taskInfo.mu_primitives.empty() &&
+			!forwardInfo_new.collisionInfos.first.first.empty()) {
+		std::vector<VecXd> dr_dmu = calculatedr_dmu(
+				forwardInfo_new.collisionInfos.first.first,
+				taskInfo.mu_primitives);
+		ret.dL_dmu.clear();
+		for (size_t i = 0; i < taskInfo.mu_primitives.size() &&
+							i < dr_dmu.size(); ++i) {
+			const double dL_dmui = dr_dmu[i].transpose() *
+									sceneConfig.timeStep * dL_dx_new;
+			ret.dL_dmu.emplace_back(taskInfo.mu_primitives[i], dL_dmui);
 		}
 	}
 
@@ -5174,6 +5206,12 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 			avbdRet.dL_dfext += derivative.dL_dfext;
 			if (avbdRet.dL_dwind.size() == derivative.dL_dwind.size()) {
 				avbdRet.dL_dwind += derivative.dL_dwind;
+			}
+			// CHI-112: accumulate dL_dmu across timesteps.
+			if (avbdRet.dL_dmu.size() == derivative.dL_dmu.size()) {
+				for (size_t i = 0; i < avbdRet.dL_dmu.size(); ++i) {
+					avbdRet.dL_dmu[i].second += derivative.dL_dmu[i].second;
+				}
 			}
 			avbdRet.loss = derivative.loss;
 			// AVBD doesn't compute dL_dv (velocity cotangent); set to
