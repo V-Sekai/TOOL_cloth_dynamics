@@ -1296,13 +1296,23 @@ void Simulation::step() {
 		sysMat[0].avbd->readPositions(avbdPos);
 		float dxMax = 0.0f, dxMean = 0.0f;
 		float convergeMax = 0.0f, convergeMean = 0.0f;
+		// Decompose |Δx| = |avbd − x_n| into predictor contribution
+		// |s_n − x_n| (velocity + h²g) and AVBD's drift |avbd − s_n|.
+		// If predictor dominates: dxMax is real physics (velocity
+		// accumulating). If drift dominates: AVBD is "snapping to
+		// equilibrium" rather than tracking the implicit-Euler step.
+		float predMax = 0.0f, driftMax = 0.0f;
 		int nanCount = 0;
 		for (uint32_t i = 0; i < nV; ++i) {
 			for (int axis = 0; axis < 3; ++axis) {
 				const float ax = avbdPos[3*i + axis];
 				const float dx = std::fabs(ax - posF[3*i + axis]);
+				const float dp = std::fabs(predF[3*i + axis] - posF[3*i + axis]);
+				const float dd = std::fabs(ax - predF[3*i + axis]);
 				if (!std::isfinite(ax)) ++nanCount;
 				if (dx > dxMax) dxMax = dx;
+				if (dp > predMax) predMax = dp;
+				if (dd > driftMax) driftMax = dd;
 				dxMean += dx;
 				if (!avbdPosHalf.empty()) {
 					const float dconv = std::fabs(ax - avbdPosHalf[3*i + axis]);
@@ -1318,9 +1328,11 @@ void Simulation::step() {
 		// iters would have been enough. Large values mean more iters
 		// needed.
 		std::printf("[avbd-shadow] step %zu  dof=%u  iters=%d  rc=%d  wall=%lld us"
-		            "  |Δx|_max=%g  |Δx|_mean=%g  conv_max=%g  conv_mean=%g  nan=%d\n",
+		            "  |Δx|_max=%g  |Δx|_mean=%g  pred_max=%g  drift_max=%g"
+		            "  conv_max=%g  conv_mean=%g  nan=%d\n",
 		            forwardRecords.size(), nV * 3u, s_avbdIters, rc, us,
-		            dxMax, dxMean, convergeMax, convergeMean, nanCount);
+		            dxMax, dxMean, predMax, driftMax,
+		            convergeMax, convergeMean, nanCount);
 	}
 #endif
 	returnRecord.windFactor = windFactor;
@@ -1709,6 +1721,43 @@ void Simulation::step() {
 			static_cast<size_t>(particles.size() * 3),
 			static_cast<long long>(_bench_us));
 	}
+
+#ifdef __APPLE__
+	// AVBD_DRIVE=1 commits AVBD's shadow output as the simulation
+	// outcome — overrides PD's converged Particle.pos and recomputes
+	// velocity from the AVBD delta. Use ONLY when you've verified
+	// AVBD converges to a sensible state on this scene (per #86 the
+	// dress's "conv_max" is slow linear convergence, not divergence,
+	// so this should be safe).
+	//
+	// The shadow shuttle already read AVBD positions into `avbdPos`
+	// earlier in step(); we re-read here to get the latest copy
+	// after the iter loop completed. Particle.pos and Particle.velocity
+	// are updated; collision / contact / fixed points stay whatever
+	// the PD pass computed (potentially inconsistent — that's why
+	// this is opt-in).
+	static const bool s_avbdDrive = (std::getenv("AVBD_DRIVE") != nullptr);
+	if (s_avbdDrive && g_useAvbd && currentSysmatId == 0 &&
+	    sysMat[0].avbd && sysMat[0].avbd->ok()) {
+		std::vector<float> avbdPosFinal;
+		sysMat[0].avbd->readPositions(avbdPosFinal);
+		const double invH = 1.0 / sceneConfig.timeStep;
+		for (size_t i = 0; i < particles.size(); ++i) {
+			const double nx = double(avbdPosFinal[3*i+0]);
+			const double ny = double(avbdPosFinal[3*i+1]);
+			const double nz = double(avbdPosFinal[3*i+2]);
+			Vec3d newPos(nx, ny, nz);
+			// v = (x_avbd − x_n) / h (x_n is start-of-step position;
+			// `particles[i].pos` was already overwritten by PD's
+			// x_new earlier in step()).
+			Vec3d startPos = x_n.segment(3*i, 3);
+			particles[i].velocity = (newPos - startPos) * invH;
+			particles[i].pos = newPos;
+		}
+		std::printf("[avbd-drive] step %zu wrote AVBD output to Particle.pos\n",
+		            forwardRecords.size());
+	}
+#endif
 
 	// [bench] one-shot phase breakdown on a chosen step number (default 20).
 	// Set BENCH_PHASE_AT=<step_number> to pick which step to dump. Useful
@@ -3333,15 +3382,28 @@ void Simulation::initializePrefactoredMatrices() {
 				// DiffCloth's `mesh` vector holds Triangle constraints
 				// with (p0, p1, p2). Stiffness is Triangle::k_stiff
 				// (shared static; per-triangle override is uncommon).
+				// Each Triangle stores `inv_deltaUV` (2x2 rest material
+				// matrix inverse) used to map raw 3D edges into the 2D
+				// material plane: F = [p1-p0 | p2-p0] · inv_deltaUV.
+				// AVBD's membrane kernel needs this — without it every
+				// triangle is treated as canonical/equilateral rest,
+				// pulling the mesh toward an unphysical equilibrium.
 				const uint32_t nT = uint32_t(mesh.size());
 				std::vector<uint32_t> triIdx(3 * nT);
+				std::vector<float>    triInvUV(4 * nT);
 				std::vector<float>    triK(nT, float(Triangle::k_stiff));
 				for (uint32_t i = 0; i < nT; ++i) {
 					triIdx[3*i + 0] = uint32_t(mesh[i].p0_idx);
 					triIdx[3*i + 1] = uint32_t(mesh[i].p1_idx);
 					triIdx[3*i + 2] = uint32_t(mesh[i].p2_idx);
+					// Row-major 2x2: [m00, m01, m10, m11].
+					triInvUV[4*i + 0] = float(mesh[i].inv_deltaUV(0, 0));
+					triInvUV[4*i + 1] = float(mesh[i].inv_deltaUV(0, 1));
+					triInvUV[4*i + 2] = float(mesh[i].inv_deltaUV(1, 0));
+					triInvUV[4*i + 3] = float(mesh[i].inv_deltaUV(1, 1));
 				}
-				avbd->uploadTriangles(nT, triIdx.data(), triK.data());
+				avbd->uploadTriangles(nT, triIdx.data(), triInvUV.data(),
+				                     triK.data());
 
 				// Upload attachment (point-pin) constraints from this
 				// sysMat's `attachments` vector. Each AttachmentSpring

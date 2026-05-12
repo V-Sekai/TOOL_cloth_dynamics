@@ -90,8 +90,10 @@ int main(int argc, char** argv) {
 
     constexpr uint32_t N_T = 1;
     const uint32_t triIdx[3 * N_T] = {0u, 1u, 2u};
+    // Identity inv_deltaUV — canonical rest, same as pre-PR-G behavior.
+    const float triInvUV[4 * N_T]  = {1.0f, 0.0f, 0.0f, 1.0f};
     const float triK[N_T]          = {1.0f};
-    solver.uploadTriangles(N_T, triIdx, triK);
+    solver.uploadTriangles(N_T, triIdx, triInvUV, triK);
 
     constexpr uint32_t N_B = 1;
     const uint32_t bendIdx[4 * N_B]    = {0u, 1u, 2u, 3u};
