@@ -3366,6 +3366,15 @@ void Simulation::initializePrefactoredMatrices() {
 				avbd->uploadBendings(nB, bendIdx.data(), bendWeight.data(),
 				                     bendNTarget.data(), bendK.data());
 
+				// AVBD_AL_GAMMA scales the AL γ down from its default
+				// (= stiffness, ~1e4 on dress, way too aggressive per
+				// PR #83 finding). Reasonable values: 0.001 to 0.1.
+				if (const char* gstr = std::getenv("AVBD_AL_GAMMA")) {
+					const float gscale = float(std::atof(gstr));
+					avbd->setGammaScale(gscale);
+					std::printf("[avbd] γ scaled by %g (AVBD_AL_GAMMA env)\n", gscale);
+				}
+
 				sysMat[sysMatId].avbd = avbd;
 				std::printf("[avbd] AvbdSolver loaded + uploaded "
 				            "(nVerts=%u, nSprings=%u, nTri=%u, nAttach=%u, nBend=%u, h=%g, invH²=%g)\n",

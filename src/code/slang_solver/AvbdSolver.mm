@@ -715,6 +715,18 @@ int AvbdSolver::stepDualMembrane() {
     return 0;
 }
 
+void AvbdSolver::setGammaScale(float scale) {
+    if (!ok()) return;
+    auto scaleBuf = [scale](id<MTLBuffer> buf, uint32_t n) {
+        if (!buf || n == 0) return;
+        float* p = static_cast<float*>(buf.contents);
+        for (uint32_t i = 0; i < n; ++i) p[i] *= scale;
+    };
+    scaleBuf(impl_->bufAttachGamma, impl_->nAttach);
+    scaleBuf(impl_->bufTriGamma,    impl_->nTri);
+    scaleBuf(impl_->bufBendGamma,   impl_->nBend);
+}
+
 int AvbdSolver::stepDualBending() {
     if (!ok() || !impl_->meshReady) return -1;
     if (impl_->nBend == 0) return 0;

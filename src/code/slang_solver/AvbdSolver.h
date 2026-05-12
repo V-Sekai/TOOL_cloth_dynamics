@@ -137,6 +137,15 @@ public:
     // where s = Σ w·p_r is the 4-vertex weighted sum.
     int stepDualBending();
 
+    // Multiply all γ values across attachment / membrane / bending by
+    // `scale`. Default γ on upload = constraint stiffness, which is
+    // typically ~1e3-1e4 for the dress (membrane k_stiff). PR #83
+    // showed this is too aggressive — λ over-ramps and diverges.
+    // Call this AFTER uploadAttachments / uploadTriangles /
+    // uploadBendings to scale γ down to a stable range. Calling
+    // again multiplies on top of the previous scale.
+    void setGammaScale(float scale);
+
     // Per-step state refresh: re-upload positions + predicted into the
     // existing GPU buffers (no realloc). Cheap when called every step
     // from the simulation. Caller is responsible for keeping nVerts
