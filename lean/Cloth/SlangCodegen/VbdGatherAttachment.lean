@@ -61,7 +61,11 @@ private def loopBody : List SlangStmt :=
   ]
 
 private def body : List SlangStmt :=
-  [ .declInit u  "v"      (.member (.var "tid") "x")
+  [ .declInit u  "lane"   (.member (.var "tid") "x")
+  , .declInit u  "v"
+      (.index (.var "vertPerm")
+        (.bin "+" (.var "lane")
+                  (.member (.var "params") "colorOffset")))
   , .declInit u  "sStart" (.index (.var "vertAttachOffset") (.var "v"))
   , .declInit u  "sEnd"   (.index (.var "vertAttachOffset")
                             (.bin "+" (.var "v") (.litUint 1)))
@@ -82,13 +86,18 @@ private def body : List SlangStmt :=
   ]
 
 def shader : SlangShaderModule :=
-  { globals :=
+  { structs :=
+      [ { name := "VbdGatherAttachmentParams"
+        , fields := [⟨"colorOffset", u, Semantic.none, none, none, .qIn⟩] } ]
+  , globals :=
       [ bnd 0 "attachGradV"      (.roBuf f3)
       , bnd 1 "attachHessScalar" (.roBuf f)
       , bnd 2 "vertAttachOffset" (.roBuf u)
       , bnd 3 "vertAttachIdx"    (.roBuf u)
       , bnd 4 "gScratch"         (.rwBuf f3)
       , bnd 5 "hScratch"         (.rwBuf f)
+      , bnd 6 "vertPerm"         (.roBuf u)
+      , ⟨"params", .const "VbdGatherAttachmentParams", Semantic.none, some 7, some 0, .qIn⟩
       ]
   , functions := [{
       attrs  := [.shaderCompute, .numthreads 64 1 1]
@@ -100,7 +109,11 @@ def shader : SlangShaderModule :=
     }] }
 
 def expected : String :=
-"[[vk::binding(0, 0)]]
+"struct VbdGatherAttachmentParams {
+  uint colorOffset;
+};
+
+[[vk::binding(0, 0)]]
 StructuredBuffer<float3> attachGradV;
 [[vk::binding(1, 0)]]
 StructuredBuffer<float> attachHessScalar;
@@ -112,10 +125,15 @@ StructuredBuffer<uint> vertAttachIdx;
 RWStructuredBuffer<float3> gScratch;
 [[vk::binding(5, 0)]]
 RWStructuredBuffer<float> hScratch;
+[[vk::binding(6, 0)]]
+StructuredBuffer<uint> vertPerm;
+[[vk::binding(7, 0)]]
+ConstantBuffer<VbdGatherAttachmentParams> params;
 
 [shader(\"compute\")] [numthreads(64, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID) {
-  uint v = tid.x;
+  uint lane = tid.x;
+  uint v = vertPerm[(lane + params.colorOffset)];
   uint sStart = vertAttachOffset[v];
   uint sEnd = vertAttachOffset[(v + 1u)];
   uint hb = (6u * v);

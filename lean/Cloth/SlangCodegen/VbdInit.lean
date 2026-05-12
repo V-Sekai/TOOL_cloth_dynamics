@@ -48,7 +48,11 @@ private def u  : SlangType := .scalar .uint
 private def f  : SlangType := .scalar .float
 
 private def body : List SlangStmt :=
-  [ .declInit u  "v"   (.member (.var "tid") "x")
+  [ .declInit u  "lane" (.member (.var "tid") "x")
+  , .declInit u  "v"
+      (.index (.var "vertPerm")
+        (.bin "+" (.var "lane")
+                  (.member (.var "params") "colorOffset")))
   , .declInit f3 "x"   (.index (.var "positions") (.var "v"))
   , .declInit f3 "px"  (.index (.var "predicted") (.var "v"))
   , .declInit f  "m"   (.index (.var "mass") (.var "v"))
@@ -79,14 +83,17 @@ private def body : List SlangStmt :=
 def shader : SlangShaderModule :=
   { structs :=
       [ { name := "VbdInitParams"
-        , fields := [⟨"invHSquared", f, Semantic.none, none, none, .qIn⟩] } ]
+        , fields :=
+            [ ⟨"invHSquared", f, Semantic.none, none, none, .qIn⟩
+            , ⟨"colorOffset", u, Semantic.none, none, none, .qIn⟩ ] } ]
   , globals :=
       [ ⟨"params",    .const "VbdInitParams", Semantic.none, some 0, some 0, .qIn⟩
       , ⟨"positions", .roBuf f3,              Semantic.none, some 1, some 0, .qIn⟩
       , ⟨"predicted", .roBuf f3,              Semantic.none, some 2, some 0, .qIn⟩
       , ⟨"mass",      .roBuf f,               Semantic.none, some 3, some 0, .qIn⟩
       , ⟨"gScratch",  .rwBuf f3,              Semantic.none, some 4, some 0, .qIn⟩
-      , ⟨"hScratch",  .rwBuf f,               Semantic.none, some 5, some 0, .qIn⟩ ]
+      , ⟨"hScratch",  .rwBuf f,               Semantic.none, some 5, some 0, .qIn⟩
+      , ⟨"vertPerm",  .roBuf u,               Semantic.none, some 6, some 0, .qIn⟩ ]
   , functions := [{
       attrs  := [.shaderCompute, .numthreads 64 1 1]
       name   := "main"
@@ -99,6 +106,7 @@ def shader : SlangShaderModule :=
 def expected : String :=
 "struct VbdInitParams {
   float invHSquared;
+  uint colorOffset;
 };
 
 [[vk::binding(0, 0)]]
@@ -113,10 +121,13 @@ StructuredBuffer<float> mass;
 RWStructuredBuffer<float3> gScratch;
 [[vk::binding(5, 0)]]
 RWStructuredBuffer<float> hScratch;
+[[vk::binding(6, 0)]]
+StructuredBuffer<uint> vertPerm;
 
 [shader(\"compute\")] [numthreads(64, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID) {
-  uint v = tid.x;
+  uint lane = tid.x;
+  uint v = vertPerm[(lane + params.colorOffset)];
   float3 x = positions[v];
   float3 px = predicted[v];
   float m = mass[v];

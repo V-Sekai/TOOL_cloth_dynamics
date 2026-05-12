@@ -62,6 +62,13 @@ int main() {
         hScratch[6*v + 5] = 10.0f;  // Hzz
     }
 
+    // Identity vertex permutation + zero color offset — same lane-to-vert
+    // mapping as the pre-coloring version, so reference math is bit-exact.
+    std::vector<uint32_t> vertPerm(GROUP_SIZE);
+    for (uint32_t i = 0; i < GROUP_SIZE; ++i) vertPerm[i] = i;
+    VbdGatherAttachmentParams_0 paramsBuf{};
+    paramsBuf.colorOffset_0 = 0u;
+
     GlobalParams_0 gp{};
     gp.attachGradV_0.data      = attachGradV.data();      gp.attachGradV_0.count      = attachGradV.size();
     gp.attachHessScalar_0.data = attachHessScalar.data(); gp.attachHessScalar_0.count = attachHessScalar.size();
@@ -69,6 +76,8 @@ int main() {
     gp.vertAttachIdx_0.data    = vertAttachIdx.data();    gp.vertAttachIdx_0.count    = vertAttachIdx.size();
     gp.gScratch_0.data         = gScratch.data();         gp.gScratch_0.count         = gScratch.size();
     gp.hScratch_0.data         = hScratch.data();         gp.hScratch_0.count         = hScratch.size();
+    gp.vertPerm_0.data         = vertPerm.data();         gp.vertPerm_0.count         = vertPerm.size();
+    gp.params_0                = &paramsBuf;
 
     ComputeVaryingInput vi{};
     vi.startGroupID = uint3(0, 0, 0);

@@ -79,10 +79,22 @@ int main() {
     hScratch[16] = 0.0f;  // Hyz
     hScratch[17] = 5.0f;  // Hzz
 
+    // Identity vertex permutation + zero color offset — same lane-to-vert
+    // mapping as the pre-PR-coloring version, so existing reference math
+    // is bit-exact. Coloring-aware dispatch is exercised in AvbdSolver
+    // tests; here we only check the kernel still produces the right
+    // arithmetic when given the identity perm.
+    std::vector<uint32_t> vertPerm(GROUP_SIZE);
+    for (uint32_t i = 0; i < GROUP_SIZE; ++i) vertPerm[i] = i;
+    VbdSolveApplyParams_0 paramsBuf{};
+    paramsBuf.colorOffset_0 = 0u;
+
     GlobalParams_0 gp{};
     gp.gScratch_0.data  = gScratch.data();  gp.gScratch_0.count  = gScratch.size();
     gp.hScratch_0.data  = hScratch.data();  gp.hScratch_0.count  = hScratch.size();
     gp.positions_0.data = positions.data(); gp.positions_0.count = positions.size();
+    gp.vertPerm_0.data  = vertPerm.data();  gp.vertPerm_0.count  = vertPerm.size();
+    gp.params_0         = &paramsBuf;
 
     ComputeVaryingInput vi{};
     vi.startGroupID = uint3(0, 0, 0);
