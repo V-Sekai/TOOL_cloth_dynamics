@@ -1939,13 +1939,16 @@ void Simulation::step() {
 		}();
 		if (!s_avbdNoSelf && selfcollisionEnabled) {
 			size_t resolvedTotal = 0;
+			long long detectUs = 0, resolveUs = 0;
 			VecXd v_zero = VecXd::Zero(3 * particles.size());
 			for (int pass = 0; pass < s_avbdSelfPasses; ++pass) {
+				auto _t0 = std::chrono::steady_clock::now();
 				VecXd x_now(3 * particles.size());
 				for (size_t i = 0; i < particles.size(); ++i)
 					x_now.segment(3 * i, 3) = particles[i].pos;
 				auto info = collisionDetection(x_now, v_zero,
 				                                xnew_n_primitives, v_n_primitives);
+				auto _t1 = std::chrono::steady_clock::now();
 				size_t passResolved = 0;
 				for (auto& sc : info.first.second) {
 					if (!sc.collides) continue;
@@ -1962,12 +1965,16 @@ void Simulation::step() {
 						++passResolved;
 					}
 				}
+				auto _t2 = std::chrono::steady_clock::now();
+				detectUs += std::chrono::duration_cast<std::chrono::microseconds>(_t1 - _t0).count();
+				resolveUs += std::chrono::duration_cast<std::chrono::microseconds>(_t2 - _t1).count();
 				resolvedTotal += passResolved;
 				if (passResolved == 0) break;  // settled
 			}
 			if (resolvedTotal > 0)
-				std::printf("[avbd-selfcoll] step %zu resolved %zu pair penetrations across %d passes\n",
-				            forwardRecords.size(), resolvedTotal, s_avbdSelfPasses);
+				std::printf("[avbd-selfcoll] step %zu resolved %zu  detect=%lld us  resolve=%lld us\n",
+				            forwardRecords.size(), resolvedTotal,
+				            detectUs, resolveUs);
 		}
 	}
 
