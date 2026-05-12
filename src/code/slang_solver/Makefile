@@ -16,7 +16,10 @@ CXX        ?= clang++
 CXXFLAGS   ?= -std=c++17 -O2 -Wall -Wextra
 INCLUDES   := -I.
 
-.PHONY: test test-avbd clean
+EIGEN_INC := $(REPO_ROOT)/external/eigen
+LBFGSPP_INC := $(REPO_ROOT)/external/LBFGSpp/include
+
+.PHONY: test test-avbd test-inverse-design clean
 
 test: $(BUILD)/test_metal_cg_solver
 	@echo "=== Smoke test of the wrapper (no Eigen, no DiffCloth)."
@@ -25,6 +28,10 @@ test: $(BUILD)/test_metal_cg_solver
 test-avbd: $(BUILD)/test_avbd_solver
 	@echo "=== Smoke test of AvbdSolver — all 6 AVBD PSOs build."
 	$(BUILD)/test_avbd_solver $(METALLIB_DIR)
+
+test-inverse-design: $(BUILD)/test_avbd_inverse_design
+	@echo "=== Inverse-design MVP (CHI-14 Brick A): LBFGSpp fits k via AVBD adjoint."
+	$(BUILD)/test_avbd_inverse_design $(METALLIB_DIR)
 
 $(BUILD)/test_metal_cg_solver: test_metal_cg_solver.cpp \
                                 $(BUILD)/MetalCGSolver.o
@@ -36,6 +43,12 @@ $(BUILD)/test_metal_cg_solver: test_metal_cg_solver.cpp \
 $(BUILD)/test_avbd_solver: test_avbd_solver.cpp $(BUILD)/AvbdSolver.o
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) \
+	  -framework Metal -framework Foundation \
+	  -o $@ $^
+
+$(BUILD)/test_avbd_inverse_design: test_avbd_inverse_design.cpp $(BUILD)/AvbdSolver.o
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I$(EIGEN_INC) -I$(LBFGSPP_INC) \
 	  -framework Metal -framework Foundation \
 	  -o $@ $^
 
