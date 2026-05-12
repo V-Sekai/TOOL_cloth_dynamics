@@ -126,6 +126,17 @@ public:
     // fixes). No-op if nAttach == 0. Returns 0 on success.
     int stepDualAttachments();
 
+    // AL dual ramp for triangle membrane (ARAP) constraints.
+    // λ_c.col0 ← λ_c.col0 + γ_c · (F.col0 − R.col0)
+    // λ_c.col1 ← λ_c.col1 + γ_c · (F.col1 − R.col1)
+    // Targets the dress-mesh oscillation (#77 finding).
+    int stepDualMembrane();
+
+    // AL dual ramp for dihedral bending constraints.
+    // λ_c ← λ_c + γ_c · (s − target)
+    // where s = Σ w·p_r is the 4-vertex weighted sum.
+    int stepDualBending();
+
     // Per-step state refresh: re-upload positions + predicted into the
     // existing GPU buffers (no realloc). Cheap when called every step
     // from the simulation. Caller is responsible for keeping nVerts
