@@ -3197,10 +3197,26 @@ void Simulation::initializePrefactoredMatrices() {
 				avbd->setupMesh(nV, posF.data(), predF.data(),
 				                massF.data(), invHSq);
 
+				// Upload spring constraints. DiffCloth's `springs` vector
+				// holds endpoint indices + rest length + per-spring
+				// stiffness `k_s`. AvbdSolver computes the vertex→spring
+				// CSR adjacency internally.
+				const uint32_t nS = uint32_t(springs.size());
+				std::vector<uint32_t> spP1(nS), spP2(nS);
+				std::vector<float>    spL(nS), spK(nS);
+				for (uint32_t i = 0; i < nS; ++i) {
+					spP1[i] = uint32_t(springs[i].p1_idx);
+					spP2[i] = uint32_t(springs[i].p2_idx);
+					spL[i]  = float(springs[i].l0);
+					spK[i]  = float(springs[i].k_s);
+				}
+				avbd->uploadSprings(nS, spP1.data(), spP2.data(),
+				                    spL.data(), spK.data());
+
 				sysMat[sysMatId].avbd = avbd;
-				std::printf("[avbd] AvbdSolver loaded + mesh uploaded "
-				            "(nVerts=%u, h=%g, invH²=%g)\n",
-				            nV, h, invHSq);
+				std::printf("[avbd] AvbdSolver loaded + uploaded "
+				            "(nVerts=%u, nSprings=%u, h=%g, invH²=%g)\n",
+				            nV, nS, h, invHSq);
 			} else {
 				std::fprintf(stderr,
 				             "[avbd] FAILED to construct AvbdSolver; "
