@@ -68,16 +68,26 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::vector<float> gOut, hOut;
-    solver.readScratch(gOut, hOut);
+    // After step(), check positions were updated by vbd_solve_apply.
+    //
+    // Per-vertex math: Δx = −H⁻¹ g, where (g, H) is the inertial term
+    // plus the spring contribution from the gather kernel.
+    //
+    // v0:  g=(-5,-8,-12), H=diag(5,4,4)
+    //   adj=diag(16,20,20), det=80, invDet=1/80
+    //   Δx = -(1/80)·(16·-5, 20·-8, 20·-12) = (1, 2, 3)
+    //   new pos = (0,0,0) + (1,2,3) = (1, 2, 3)
+    //
+    // v1:  g=(1,0,0), H=diag(3,2,2)
+    //   adj=diag(4,6,6), det=12, invDet=1/12
+    //   Δx = -(1/12)·(4·1, 6·0, 6·0) = (-1/3, 0, 0)
+    //   new pos = (3,0,0) + (-1/3,0,0) = (8/3, 0, 0)
+    std::vector<float> posOut;
+    solver.readPositions(posOut);
 
-    const float expected_g[3 * N] = {
-        -5.0f, -8.0f, -12.0f,
-         1.0f,  0.0f,   0.0f,
-    };
-    const float expected_h[6 * N] = {
-        5.0f, 0.0f, 0.0f, 4.0f, 0.0f, 4.0f,
-        3.0f, 0.0f, 0.0f, 2.0f, 0.0f, 2.0f,
+    const float expected_pos[3 * N] = {
+        1.0f, 2.0f, 3.0f,
+        8.0f / 3.0f, 0.0f, 0.0f,
     };
 
     int fails = 0;
@@ -94,12 +104,13 @@ int main(int argc, char** argv) {
             ++fails;
         }
     };
-    for (uint32_t i = 0; i < 3 * N; ++i) check(gOut[i], expected_g[i], "g", i);
-    for (uint32_t i = 0; i < 6 * N; ++i) check(hOut[i], expected_h[i], "h", i);
+    for (uint32_t i = 0; i < 3 * N; ++i) check(posOut[i], expected_pos[i], "pos", i);
 
     if (fails == 0) {
-        std::printf("test_avbd_solver: OK (vbd_init+spring_force+gather_spring on %u verts/%u spring, max_abs_diff=%g)\n",
+        std::printf("test_avbd_solver: OK (full AVBD step on %u verts/%u spring, max_abs_diff=%g)\n",
                     N, N_S, max_abs_diff);
+        std::printf("  v0 pos: (%g, %g, %g) — expected (1, 2, 3)\n",     posOut[0], posOut[1], posOut[2]);
+        std::printf("  v1 pos: (%g, %g, %g) — expected (8/3, 0, 0)\n",   posOut[3], posOut[4], posOut[5]);
         return 0;
     }
     std::fprintf(stderr, "test_avbd_solver: %d FAIL\n", fails);

@@ -301,6 +301,14 @@ int AvbdSolver::step() {
        threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     }
 
+    // 4. vbd_solve_apply: invert 3x3 H, write positions += -H⁻¹ g.
+    [enc setComputePipelineState:impl_->psoSolveApply];
+    [enc setBuffer:impl_->bufGScratch  offset:0 atIndex:0];
+    [enc setBuffer:impl_->bufHScratch  offset:0 atIndex:1];
+    [enc setBuffer:impl_->bufPositions offset:0 atIndex:2];
+    [enc dispatchThreads:MTLSizeMake(impl_->nVerts, 1, 1)
+   threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
@@ -319,6 +327,14 @@ void AvbdSolver::readScratch(std::vector<float>& gScratch_out,
     readVec3Padded(gScratch_out, impl_->bufGScratch, n);
     hScratch_out.assign(6 * n, 0.0f);
     std::memcpy(hScratch_out.data(), impl_->bufHScratch.contents, 6 * n * sizeof(float));
+}
+
+void AvbdSolver::readPositions(std::vector<float>& positions_out) const {
+    if (!ok() || !impl_->meshReady) {
+        positions_out.clear();
+        return;
+    }
+    readVec3Padded(positions_out, impl_->bufPositions, impl_->nVerts);
 }
 
 void AvbdSolver::readSpringForce(std::vector<float>& gradA_out,
