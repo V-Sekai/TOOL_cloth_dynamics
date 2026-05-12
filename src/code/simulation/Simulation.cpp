@@ -1829,9 +1829,21 @@ void Simulation::step() {
 		auto _bench_us = std::chrono::duration_cast<std::chrono::microseconds>(
 			std::chrono::steady_clock::now() - _bench_t0).count();
 #ifdef __APPLE__
+		// Pick the label for what actually drove the step:
+		//   AVBD_DRIVE + AVBD_SKIP_PD → AVBD's solve, no PD CG
+		//   AVBD_DRIVE alone           → AVBD's solve after PD ran (PD output discarded)
+		//   slangCG                    → custom slang CG path
+		//   default                    → DiffCloth's Eigen LLT-preconditioned PD
+		static const bool s_benchDrive   = (std::getenv("AVBD_DRIVE")   != nullptr);
+		static const bool s_benchSkipPD  = (std::getenv("AVBD_SKIP_PD") != nullptr);
+		const bool avbdDroveThis = s_benchDrive && g_useAvbd && currentSysmatId == 0 &&
+		    sysMat[0].avbd && sysMat[0].avbd->ok();
 		const char* path =
-			(g_useSlangCG && currentSysmatId < (int)sysMat.size()
-			 && sysMat[currentSysmatId].slangCG) ? "slang" : "eigen-llt";
+			avbdDroveThis && s_benchSkipPD ? "avbd"
+			: avbdDroveThis                 ? "avbd+pd"
+			: (g_useSlangCG && currentSysmatId < (int)sysMat.size()
+			   && sysMat[currentSysmatId].slangCG) ? "slang"
+			: "eigen-llt";
 #else
 		const char* path = "eigen-llt";
 #endif
