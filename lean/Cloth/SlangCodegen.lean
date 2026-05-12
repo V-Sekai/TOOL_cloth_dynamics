@@ -22,6 +22,7 @@ import Cloth.SlangCodegen.VbdGatherSpring
 import Cloth.SlangCodegen.VbdGatherAttachment
 import Cloth.SlangCodegen.VbdGatherTriangle
 import Cloth.SlangCodegen.VbdGatherBending
+import Cloth.SlangCodegen.AttachmentDualUpdate
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella

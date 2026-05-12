@@ -42,6 +42,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("vbd_gather_attachment", VbdGatherAttachment.shader)
   , ("vbd_gather_triangle", VbdGatherTriangle.shader)
   , ("vbd_gather_bending", VbdGatherBending.shader)
+  , ("attachment_dual_update", AttachmentDualUpdate.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
