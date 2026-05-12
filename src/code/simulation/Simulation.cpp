@@ -1216,6 +1216,15 @@ void Simulation::step() {
 	// matches PD, a follow-up PR flips the switch to actually drive
 	// the simulation from AVBD.
 	if (g_useAvbd && currentSysmatId == 0 && sysMat[0].avbd && sysMat[0].avbd->ok()) {
+		// AVBD_ITERS=N (default 1) controls how many AVBD outer
+		// iterations run per Simulation::step(). Real convergence
+		// needs ~4-50 iters depending on stiffness; 1 is the
+		// shadow-timing baseline.
+		static const int s_avbdIters = []() {
+			if (const char* e = std::getenv("AVBD_ITERS"))
+				return std::max(1, std::atoi(e));
+			return 1;
+		}();
 		const uint32_t nV = uint32_t(particles.size());
 		std::vector<float> posF(3 * nV), predF(3 * nV);
 		for (uint32_t i = 0; i < nV; ++i) {
@@ -1228,12 +1237,16 @@ void Simulation::step() {
 		}
 		auto _avbd_t0 = std::chrono::steady_clock::now();
 		sysMat[0].avbd->updateState(posF.data(), predF.data());
-		const int rc = sysMat[0].avbd->step();
+		int rc = 0;
+		for (int it = 0; it < s_avbdIters; ++it) {
+			rc = sysMat[0].avbd->step();
+			if (rc != 0) break;
+		}
 		auto _avbd_t1 = std::chrono::steady_clock::now();
 		const long long us =
 		    std::chrono::duration_cast<std::chrono::microseconds>(_avbd_t1 - _avbd_t0).count();
-		std::printf("[avbd-shadow] step %zu  dof=%u  rc=%d  wall=%lld us\n",
-		            forwardRecords.size(), nV * 3u, rc, us);
+		std::printf("[avbd-shadow] step %zu  dof=%u  iters=%d  rc=%d  wall=%lld us\n",
+		            forwardRecords.size(), nV * 3u, s_avbdIters, rc, us);
 	}
 #endif
 	returnRecord.windFactor = windFactor;
