@@ -117,6 +117,13 @@ public:
     // vertex positions. Returns 0 on success, -1 if not set up.
     int step();
 
+    // Per-step state refresh: re-upload positions + predicted into the
+    // existing GPU buffers (no realloc). Cheap when called every step
+    // from the simulation. Caller is responsible for keeping nVerts
+    // stable since setupMesh; passing arrays of a different length is
+    // undefined.
+    void updateState(const float* positions, const float* predicted);
+
     // Read back current vertex positions to a host array. Used by tests.
     // `positions_out` length = 3 * nVerts (xyz).
     void readPositions(std::vector<float>& positions_out) const;

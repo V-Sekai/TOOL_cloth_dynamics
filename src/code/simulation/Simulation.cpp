@@ -1207,6 +1207,35 @@ void Simulation::step() {
 	returnRecord.x_prev = x_n;
 	returnRecord.v_prev = v_n;
 	returnRecord.s_n = s_n;
+
+#ifdef __APPLE__
+	// PR-E shadow shuttle: when USE_AVBD=1 and AvbdSolver is loaded,
+	// dispatch one full AVBD outer iteration in parallel with the PD
+	// path. The result is read back into a scratch buffer for logging;
+	// Particle.pos is NOT modified. Once we trust the shadow output
+	// matches PD, a follow-up PR flips the switch to actually drive
+	// the simulation from AVBD.
+	if (g_useAvbd && currentSysmatId == 0 && sysMat[0].avbd && sysMat[0].avbd->ok()) {
+		const uint32_t nV = uint32_t(particles.size());
+		std::vector<float> posF(3 * nV), predF(3 * nV);
+		for (uint32_t i = 0; i < nV; ++i) {
+			posF[3*i+0]  = float(x_n[3*i+0]);
+			posF[3*i+1]  = float(x_n[3*i+1]);
+			posF[3*i+2]  = float(x_n[3*i+2]);
+			predF[3*i+0] = float(s_n[3*i+0]);
+			predF[3*i+1] = float(s_n[3*i+1]);
+			predF[3*i+2] = float(s_n[3*i+2]);
+		}
+		auto _avbd_t0 = std::chrono::steady_clock::now();
+		sysMat[0].avbd->updateState(posF.data(), predF.data());
+		const int rc = sysMat[0].avbd->step();
+		auto _avbd_t1 = std::chrono::steady_clock::now();
+		const long long us =
+		    std::chrono::duration_cast<std::chrono::microseconds>(_avbd_t1 - _avbd_t0).count();
+		std::printf("[avbd-shadow] step %zu  dof=%u  rc=%d  wall=%lld us\n",
+		            forwardRecords.size(), nV * 3u, rc, us);
+	}
+#endif
 	returnRecord.windFactor = windFactor;
 	returnRecord.windParams.segment(0, 3) = wind * windNorm;
 	returnRecord.windParams[3] = windFrequency;
