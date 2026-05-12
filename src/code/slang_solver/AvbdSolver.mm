@@ -882,6 +882,7 @@ int AvbdSolver::stepDualMembrane() {
     [enc setBuffer:impl_->bufTriGamma   offset:0 atIndex:2];
     [enc setBuffer:impl_->bufTriLambda0 offset:0 atIndex:3];
     [enc setBuffer:impl_->bufTriLambda1 offset:0 atIndex:4];
+    [enc setBuffer:impl_->bufTriInvUV   offset:0 atIndex:5];
     [enc dispatchThreads:MTLSizeMake(impl_->nTri, 1, 1)
    threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     [enc endEncoding];

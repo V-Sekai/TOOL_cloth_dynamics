@@ -11,19 +11,20 @@ constraint — same idea as `AttachmentDualUpdate` (#74), but the
 constraint here is the 2-column ARAP residual `F − R` instead of a
 single point distance.
 
-Per triangle `c` with vertex indices `(i0, i1, i2)` and AL penalty
-`γ_c`:
+Per triangle `c` with vertex indices `(i0, i1, i2)`, per-triangle
+inverse rest-material matrix `inv_deltaUV` (row-major 2×2 from
+DiffCloth's `Triangle::inv_deltaUV`), and AL penalty `γ_c`:
 
 ```
-F.col(0) = p1 − p0                      -- raw edges
-F.col(1) = p2 − p0
-R        = closest-rotation(F)          -- same Gram-Schmidt + 2D
-                                           polar as TriangleMembraneForce
-e0       = F.col(0) − R.col(0)          -- residual column 0
-e1       = F.col(1) − R.col(1)          -- residual column 1
+P        = [p1 − p0 | p2 − p0]              -- 3x2 raw current edges
+F        = P · inv_deltaUV                  -- 3x2 deformation gradient
+R        = closest-rotation(F)              -- same Gram-Schmidt + 2D
+                                               polar as membrane force
+e0       = F.col(0) − R.col(0)              -- residual column 0
+e1       = F.col(1) − R.col(1)              -- residual column 1
 
-λ_c.col(0) ← λ_c.col(0) + γ_c · e0      -- dual ascent on first column
-λ_c.col(1) ← λ_c.col(1) + γ_c · e1      -- dual ascent on second column
+λ_c.col(0) ← λ_c.col(0) + γ_c · e0          -- dual ascent on first column
+λ_c.col(1) ← λ_c.col(1) + γ_c · e1          -- dual ascent on second column
 ```
 
 `λ` is stored as two `float3` buffers — one per column of the 3×2
@@ -38,9 +39,13 @@ Bindings (set 0):
   2  StructuredBuffer<float>    gamma       length = N_tri
   3  RWStructuredBuffer<float3> lambda0     length = N_tri   (column 0 of λ)
   4  RWStructuredBuffer<float3> lambda1     length = N_tri   (column 1 of λ)
+  5  StructuredBuffer<float>    inv_deltaUV length = 4 · N_tri
+                                            (row-major 2x2 per tri:
+                                             [m00, m01, m10, m11])
 
-Mirrors the closest-rotation math from TriangleMembraneForce. No
-output forces — this kernel only updates λ. Caller dispatches
+Mirrors the closest-rotation math from TriangleMembraneForce. With
+`inv_deltaUV = I` reduces bit-exactly to the pre-PR raw-edge form.
+No output forces — this kernel only updates λ. Caller dispatches
 `triangle_membrane_force_al` separately to consume λ in the force
 gradient.
 -/
@@ -75,12 +80,29 @@ private def body : List SlangStmt :=
   , .declInit f3 "p0"   (.index (.var "positions") (.var "i0"))
   , .declInit f3 "p1"   (.index (.var "positions") (.var "i1"))
   , .declInit f3 "p2"   (.index (.var "positions") (.var "i2"))
-  , .declInit f "f0x" (.bin "-" (pmv "p1" "x") (pmv "p0" "x"))
-  , .declInit f "f0y" (.bin "-" (pmv "p1" "y") (pmv "p0" "y"))
-  , .declInit f "f0z" (.bin "-" (pmv "p1" "z") (pmv "p0" "z"))
-  , .declInit f "f1x" (.bin "-" (pmv "p2" "x") (pmv "p0" "x"))
-  , .declInit f "f1y" (.bin "-" (pmv "p2" "y") (pmv "p0" "y"))
-  , .declInit f "f1z" (.bin "-" (pmv "p2" "z") (pmv "p0" "z"))
+  , .declInit u "iub"   (.bin "*" (.var "c") (.litUint 4))
+  , .declInit f "m00"   (.index (.var "inv_deltaUV") (.var "iub"))
+  , .declInit f "m01"   (.index (.var "inv_deltaUV") (.bin "+" (.var "iub") (.litUint 1)))
+  , .declInit f "m10"   (.index (.var "inv_deltaUV") (.bin "+" (.var "iub") (.litUint 2)))
+  , .declInit f "m11"   (.index (.var "inv_deltaUV") (.bin "+" (.var "iub") (.litUint 3)))
+  , .declInit f "ex0" (.bin "-" (pmv "p1" "x") (pmv "p0" "x"))
+  , .declInit f "ey0" (.bin "-" (pmv "p1" "y") (pmv "p0" "y"))
+  , .declInit f "ez0" (.bin "-" (pmv "p1" "z") (pmv "p0" "z"))
+  , .declInit f "ex1" (.bin "-" (pmv "p2" "x") (pmv "p0" "x"))
+  , .declInit f "ey1" (.bin "-" (pmv "p2" "y") (pmv "p0" "y"))
+  , .declInit f "ez1" (.bin "-" (pmv "p2" "z") (pmv "p0" "z"))
+  , .declInit f "f0x" (.bin "+" (.bin "*" (.var "ex0") (.var "m00"))
+                                (.bin "*" (.var "ex1") (.var "m10")))
+  , .declInit f "f0y" (.bin "+" (.bin "*" (.var "ey0") (.var "m00"))
+                                (.bin "*" (.var "ey1") (.var "m10")))
+  , .declInit f "f0z" (.bin "+" (.bin "*" (.var "ez0") (.var "m00"))
+                                (.bin "*" (.var "ez1") (.var "m10")))
+  , .declInit f "f1x" (.bin "+" (.bin "*" (.var "ex0") (.var "m01"))
+                                (.bin "*" (.var "ex1") (.var "m11")))
+  , .declInit f "f1y" (.bin "+" (.bin "*" (.var "ey0") (.var "m01"))
+                                (.bin "*" (.var "ey1") (.var "m11")))
+  , .declInit f "f1z" (.bin "+" (.bin "*" (.var "ez0") (.var "m01"))
+                                (.bin "*" (.var "ez1") (.var "m11")))
   , .declInit f "a"   (len3 (.var "f0x") (.var "f0y") (.var "f0z"))
   , .declInit f "e1x" (.bin "/" (.var "f0x") (.var "a"))
   , .declInit f "e1y" (.bin "/" (.var "f0y") (.var "a"))
@@ -140,11 +162,12 @@ private def body : List SlangStmt :=
 
 def shader : SlangShaderModule :=
   { globals :=
-      [ bnd 0 "positions" (.roBuf f3)
-      , bnd 1 "idx"       (.roBuf u)
-      , bnd 2 "gamma"     (.roBuf f)
-      , bnd 3 "lambda0"   (.rwBuf f3)
-      , bnd 4 "lambda1"   (.rwBuf f3)
+      [ bnd 0 "positions"   (.roBuf f3)
+      , bnd 1 "idx"         (.roBuf u)
+      , bnd 2 "gamma"       (.roBuf f)
+      , bnd 3 "lambda0"     (.rwBuf f3)
+      , bnd 4 "lambda1"     (.rwBuf f3)
+      , bnd 5 "inv_deltaUV" (.roBuf f)
       ]
   , functions := [{
       attrs  := [.shaderCompute, .numthreads 64 1 1]
@@ -166,6 +189,8 @@ StructuredBuffer<float> gamma;
 RWStructuredBuffer<float3> lambda0;
 [[vk::binding(4, 0)]]
 RWStructuredBuffer<float3> lambda1;
+[[vk::binding(5, 0)]]
+StructuredBuffer<float> inv_deltaUV;
 
 [shader(\"compute\")] [numthreads(64, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID) {
@@ -177,12 +202,23 @@ void main(uint3 tid : SV_DispatchThreadID) {
   float3 p0 = positions[i0];
   float3 p1 = positions[i1];
   float3 p2 = positions[i2];
-  float f0x = (p1.x - p0.x);
-  float f0y = (p1.y - p0.y);
-  float f0z = (p1.z - p0.z);
-  float f1x = (p2.x - p0.x);
-  float f1y = (p2.y - p0.y);
-  float f1z = (p2.z - p0.z);
+  uint iub = (c * 4u);
+  float m00 = inv_deltaUV[iub];
+  float m01 = inv_deltaUV[(iub + 1u)];
+  float m10 = inv_deltaUV[(iub + 2u)];
+  float m11 = inv_deltaUV[(iub + 3u)];
+  float ex0 = (p1.x - p0.x);
+  float ey0 = (p1.y - p0.y);
+  float ez0 = (p1.z - p0.z);
+  float ex1 = (p2.x - p0.x);
+  float ey1 = (p2.y - p0.y);
+  float ez1 = (p2.z - p0.z);
+  float f0x = ((ex0 * m00) + (ex1 * m10));
+  float f0y = ((ey0 * m00) + (ey1 * m10));
+  float f0z = ((ez0 * m00) + (ez1 * m10));
+  float f1x = ((ex0 * m01) + (ex1 * m11));
+  float f1y = ((ey0 * m01) + (ey1 * m11));
+  float f1z = ((ez0 * m01) + (ez1 * m11));
   float a = sqrt((((f0x * f0x) + (f0y * f0y)) + (f0z * f0z)));
   float e1x = (f0x / a);
   float e1y = (f0y / a);
