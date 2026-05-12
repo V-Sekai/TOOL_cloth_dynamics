@@ -24,7 +24,7 @@ LEAN_DIR   := $(REPO_ROOT)/lean
 
 # Metal kernels we benchmark on real GPU (Tier-3 perf). The full slang →
 # air → metallib pipeline runs once per kernel listed here.
-METAL_KERNELS := spring_project saxpby spmv dot_reduce_serial dot_reduce assemble_b cg_alpha cg_beta saxpby_indirect spmv_df32 saxpby_indirect_df32 spring_force
+METAL_KERNELS := spring_project saxpby spmv dot_reduce_serial dot_reduce assemble_b cg_alpha cg_beta saxpby_indirect spmv_df32 saxpby_indirect_df32 spring_force vbd_init
 METALLIBS     := $(addprefix $(EMITTED)/,$(addsuffix .metallib,$(METAL_KERNELS)))
 
 CXX        ?= clang++
@@ -50,7 +50,8 @@ TESTS      := spring_project:spring_project triangle_bending:triangle_bending \
               spring_force:spring_force \
               attachment_force:attachment_force \
               triangle_membrane_force:triangle_membrane_force \
-              triangle_bending_force:triangle_bending_force
+              triangle_bending_force:triangle_bending_force \
+              vbd_init:vbd_init
 
 TEST_NAMES := $(foreach t,$(TESTS),$(word 1,$(subst :, ,$(t))))
 KERNEL_FOR  = $(word 2,$(subst :, ,$(filter $(1):%,$(TESTS))))
