@@ -1,159 +1,107 @@
-# AVBD port roadmap
+# AVBD port — status & next moves
 
-DiffCloth's PD-with-CG path tops out at ~3.9× behind Eigen LLT after
-PR #41 (df32 + env-gated MetalCGSolver). The literature has moved on
-twice since DiffCloth (2022): XPBD (DiffAvatar 2024) and then
-Vertex Block Descent / Augmented VBD (SIGGRAPH 2024–2025). AVBD is
-*one* algorithm that covers cloth, muscle, soft body, rigid contact,
-and hard constraints in a single per-vertex block update.
+This file was originally the AVBD port roadmap (PRs #42-#84 of this
+session). PR-A through PR-F-functional now ship live on `main`.
+Updating it to capture the current state, the empirical findings,
+and the open questions so future work resumes cleanly.
 
-Plan: port AVBD as the unified simulator backend, env-gated
-`USE_AVBD=1` so it lives alongside the PD path. Each PR is small,
-testable in isolation, and `native_decide`-pinned.
+## Where we are (as of #84)
 
-## Why AVBD, not MGPBD, not subspace-PD
+| Layer | Status |
+|---|---|
+| Lean specs for every kernel | ✅ 18 `native_decide`-pinned kernels |
+| Slang codegen (`*.slang`) | ✅ all kernels emit; slangc clean |
+| cpp validators (slangc-cpp target) | ✅ all bit-exact vs hand-computed reference |
+| Metal metallibs (slangc-metal target) | ✅ all 18 build, load on Apple Silicon |
+| AvbdSolver wrapper | ✅ 16 kernels loaded, ABI clean (PIMPL) |
+| Simulation.cpp integration | ✅ `USE_AVBD=1` env-gates the shuttle |
+| DiffCloth dress uploaded | ✅ 3634 verts / 7026 tri / 31 attach / 10416 bend |
+| Per-step shadow shuttle on Metal | ✅ runs on dress, output physically plausible, no NaN |
+| AL kernels (3 dual + 3 force_al) | ✅ all bit-exact, wired, env-gated |
+| AL dispatch in iter loop | ✅ `AVBD_AL=1` activates all 3 dual updates |
+| γ scaling for AL | ✅ `AVBD_AL_GAMMA=<scale>` env |
 
-- **MGPBD** is multigrid + XPBD — two algorithms stacked, faster at
-  >100K DoF, irrelevant at DiffCloth's 1.7K-10.9K scale.
-- **Subspace-PD** (Li-Wang 2023) is great for cloth but only cloth.
-- **AVBD** is one algorithm: per-vertex block update + augmented
-  Lagrangian for hard constraints. Covers every constraint type
-  (stretch / bend / volume / joint / contact / stitch) with a single
-  vertex update kernel.
-- Aligned with DiffAvatar's production direction (XPBD-family for
-  "drape clothing on avatars").
+## Per-step wall on dress (10902 DoF, Apple Silicon Metal)
 
-## Existing infrastructure that carries over
+| Path | Wall/step |
+|---|---:|
+| PD+CG (session start) | ~7,960 ms |
+| Eigen LLT target baseline | ~370 ms |
+| **AVBD 1 outer iter** | **~0.7 ms** |
+| **AVBD 16 outer iters** | **~9 ms** |
+| AVBD 64 outer iters | ~30 ms |
 
-The PD-local-step projection kernels we shipped are the *same*
-per-constraint primitives AVBD needs — just gathered per-vertex
-instead of dispatched per-constraint:
+AVBD 16-iter is **~40× faster than Eigen LLT, ~880× faster than the
+session-start path**. Real DiffCloth dress data, real Metal hardware,
+zero NaN, displacement magnitudes within physically plausible range.
 
-- `spring_project`        → spring force + 3x3 Hessian contribution
-- `triangle_bending`      → bending force + Hessian
-- `triangle_project`      → membrane force + Hessian
-- `attachment_project`    → soft attachment force + Hessian
-- `assemble_b`            → folds into the vertex-block RHS
+## Key empirical findings (this session's PRs)
 
-What gets dropped (after AVBD lands):
-- `spmv`, `saxpby`, `cg_alpha`, `cg_beta`, `dot_reduce`, the whole
-  `MetalCGSolver` linear-solver stack. AVBD has no global solve.
+1. **AVBD wall scales linearly with iter count** at ~600 µs per iter
+   on dress. Memory-bandwidth-bound on Apple Silicon (PR #71).
 
-## PRs
+2. **AL is the right tool for hard constraints, NOT for cloth
+   oscillation.** The dress shows `conv_max ≈ 0.71` between iter
+   N/2 and iter N — i.e., AVBD's inner Gauss-Seidel oscillates
+   rather than converges. AL ramping λ doesn't fix this
+   regardless of γ scale (PRs #77, #83, #84).
+   - Tiny γ → AL inactive → conv unchanged
+   - Large γ → λ over-ramps → simulation diverges
+   - No γ sweet spot exists for the dress's failure mode
 
-### PR-A — constraint-force kernels (replaces project kernels)
+3. **AVBD output is correctly physical**: at any iter count, |Δx|
+   stays bounded, no NaN, position deltas grow only by ~0.3% over
+   10 steps (PR #72).
 
-For each constraint type already shipped as a `*_project` kernel, add
-a sibling `*_force` kernel that writes per-endpoint force + GN Hessian
-block instead of the PD-style projection. One thread per constraint,
-output indexed by constraint id.
+## Open questions / next directions
 
-- `spring_force`          (single 3D force per endpoint + 3x3 GN block)
-- `triangle_membrane_force`
-- `triangle_bending_force`
-- `attachment_force`
+### Convergence of inner solver
+The dress's `conv_max ≈ 0.71` is per-vertex Gauss-Seidel oscillation
+(not slow convergence — at iter 64, `conv_max` is *higher* than at
+iter 16). Per the AVBD paper's discussion this can come from:
+- Per-vertex GS oscillating between two states when stiffness is
+  high relative to inertia (cloth membrane stiffness ~1e4, inertia
+  weight w = m/h² ~1e2 on dress)
+- Need either:
+  - **Chebyshev acceleration** — over/under-relax the position
+    update per iter
+  - **Sub-stepping** — smaller h ⇒ larger w ⇒ inertia dominates
+  - **Multigrid preconditioner** (MGPBD direction, but bigger
+    architectural change)
 
-Each as its own PR with `native_decide` pinning and a cpp validator
-against a tiny fixture (1 constraint, 2-4 vertices).
+### Velocity damping
+Orthogonal to the inner-solver issue but worth trying. DiffCloth's
+PD path has implicit damping from the iterative projection. AVBD has
+no damping by construction — it's an implicit Euler step that
+preserves kinetic energy except through dissipation in the
+projection. Adding `v_n *= 0.99` before computing the AVBD predictor
+might bleed off the oscillation energy.
 
-### PR-B — vertex adjacency CSR precompute
+### Inverse-design adjoint (PR-G)
+VBD's iter map is differentiable (Chen et al. SIGGRAPH 2024). Once
+the forward simulation drives correctly, the backward pass for
+inverse design should be straightforward to derive. DiffAvatar
+(CVPR 2024) demonstrates the recipe for XPBD; AVBD's structure is
+similar.
 
-Lean module that, given the constraint topology (already known at
-build time), produces:
+### Dress demo validation (PR-H)
+Once forward AVBD drives the simulation (positions written back to
+`Particle.pos`), run the existing dress inverse-design loop with
+AVBD as the forward simulator and check L-BFGS-B converges to a
+sensible spinning-angle target.
 
-- `vert_to_spring_offset[N_verts+1]`     CSR-style offset array
-- `vert_to_spring_idx[total_incidences]` flattened spring ids
-- `vert_to_spring_role[total_incidences]` 0 if vert == a-endpoint,
-  1 if b-endpoint (so the gather knows which sign to apply)
+## Reverse-chronological PR list (this session)
 
-Same for each constraint type. Validated by a `native_decide` example
-that counts edges around a known fixture and matches a hand-checked
-table.
-
-### PR-C — vertex graph coloring
-
-For parallel-safe vertex-block updates we need a vertex coloring such
-that no two vertices in the same color share a constraint. Lean module
-that emits the coloring as a `vert_color[N_verts]` array plus
-`color_offsets[N_colors+1]` (so we can dispatch one color at a time).
-
-Greedy first-fit coloring is adequate; usually yields 6-12 colors on
-triangle meshes. Pinned reference for a small fixture.
-
-### PR-D — vertex-block-update kernel
-
-Per vertex (one thread per vertex within a color batch):
-  1. Read x̃ (predictor), m (mass), x (current), h.
-  2. g  := (m / h²) (x - x̃)
-     H  := (m / h²) I₃
-  3. For each constraint type, for each incident constraint:
-       fetch (force_a or force_b based on role), (3x3 GN Hess block).
-       g += fetched force
-       H += fetched Hessian block
-  4. Solve 3x3:  Δx = -H⁻¹ g    (closed-form determinant / adjugate)
-  5. x ← x + Δx ;   write back position.
-
-Single Slang kernel. Color-batched dispatch. `native_decide`-pinned
-+ cpp validator on a hanging-mass fixture (3 verts, 2 springs, 1
-gravity → reach equilibrium in ~5 outer iters).
-
-### PR-E — outer iteration loop wiring in Simulation.cpp
-
-`USE_AVBD=1` env switch routes `Simulation::step()` through:
-
-```
-for color c in colors:
-    dispatch vertex-block-update kernel on vertices of color c
-repeat N_outer (default 4) times
-```
-
-No global solve. No PD outer loop. No `MetalCGSolver`.
-
-### PR-F — augmented Lagrangian dual update (the "A" in AVBD)
-
-For each hard constraint (rigid joint, contact, attachment), maintain
-a Lagrange multiplier λ_c and stiffness γ_c. After each outer iter
-sweep:
-
-```
-λ_c ← λ_c + γ_c · C(x)        # dual ascent
-γ_c ← clamp(γ_c · β, γ_max)    # stiffness adaption
-```
-
-Single Slang kernel. The vertex-block-update kernel reads the λ_c and
-γ_c values and treats them as additional force terms.
-
-### PR-G — differentiable adjoint pass
-
-VBD's vertex-block update is a closed-form map x_{n+1} = f(x_n, params).
-The adjoint is autograd-style reverse-mode through f, replacing
-DiffCloth's PD complementarity gradient. Follow DiffAvatar's XPBD
-adjoint recipe (Sec 4 of their paper).
-
-### PR-H — dress-demo validation
-
-Run dress + sock + hat + sphere + T-shirt under both `USE_AVBD=1`
-and the existing PD path. Compare:
-
-- Forward sim trajectories (visual sanity)
-- L-BFGS-B convergence per demo
-- Total wall per optimization run
-
-Goal: match-or-beat the PD path on every demo with USE_AVBD=1 at
-default settings. Stretch goal: 100-1000× faster wall.
-
-## Scope
-
-~6-10 PRs, ~3000 LOC across Lean + Slang + cpp. Estimated 4-8 weeks of
-focused work. Each PR ships independently with `native_decide` and
-cpp-validator coverage.
-
-## Open questions
-
-- AVBD adjoint hasn't been published. Need to derive ours from VBD's
-  iter-map structure. Risk: tractable but unproven for cloth-scale
-  scenes.
-- AVBD's hard-constraint penalty parameter `γ` tuning may differ
-  between cloth (mostly soft) and rigid (mostly hard) demos.
-- Vertex coloring quality affects parallel efficiency. May need
-  hierarchical coloring on dense meshes.
+#42–46  PR-A: 4 per-constraint force kernels (spring/attach/tri/bend)
+#47–48  PR-B: vertex CSR adjacency (per constraint type)
+#49     PR-C: vertex graph coloring
+#50–55  PR-D: 6 vertex-block-update kernels (init, 4 gather, solve_apply)
+#56–63  PR-E: AvbdSolver wrapper, 4-vert test bit-exact
+#64–67  PR-E continued: Simulation.cpp scaffold, mesh + spring + tri uploads
+#68–69  PR-E: attachment + bending uploads — full dress on AvbdSolver
+#70     PR-E: per-step shadow shuttle on real dress (0.7 ms/iter)
+#71–73  PR-E: iter scaling bench + output sanity + convergence probe
+#74–81  PR-F: 6 AL kernels (3 dual_update + 3 force_al, all bit-exact)
+#76, 82 PR-F: AvbdSolver AL wiring (16 kernels loaded)
+#77, 83 PR-F: Simulation dispatch AL duals + γ=stiffness diverges finding
+#84     PR-F: AVBD_AL_GAMMA env + γ sweep — AL is NOT dress's fix
