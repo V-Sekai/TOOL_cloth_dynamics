@@ -32,6 +32,9 @@ import Cloth.SlangCodegen.SelfCollisionScan
 import Cloth.SlangCodegen.VbdSolveApplyBackward
 import Cloth.SlangCodegen.VbdInitBackward
 import Cloth.SlangCodegen.VbdGatherTriangleBackward
+import Cloth.SlangCodegen.VbdGatherAttachmentBackward
+import Cloth.SlangCodegen.VbdGatherBendingBackward
+import Cloth.SlangCodegen.VbdGatherSpringBackward
 
 /-!
 # `Cloth.SlangCodegen` — Slang shader codegen umbrella
