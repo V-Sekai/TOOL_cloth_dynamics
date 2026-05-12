@@ -71,9 +71,11 @@ public:
                        const float* stiffness);
 
     // Dispatch one AVBD outer iteration. Currently runs:
-    //   1. vbd_init      — writes inertial term to (gScratch, hScratch)
-    //   2. spring_force  — per-spring force + GN Hessian into output buffers
-    // Gather + solve_apply land in follow-up PRs. Returns 0 on success,
+    //   1. vbd_init           writes inertial term to (gScratch, hScratch)
+    //   2. spring_force       per-spring force + GN Hessian into output buffers
+    //   3. vbd_gather_spring  per-vertex accumulates spring contributions
+    //                         into (gScratch, hScratch) via CSR adjacency
+    // solve_apply lands in a follow-up PR. Returns 0 on success,
     // -1 if not set up.
     int step();
 
