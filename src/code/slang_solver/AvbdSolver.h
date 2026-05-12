@@ -80,6 +80,18 @@ public:
                            const float* fixedPos,
                            const float* stiffness);
 
+    // Per-step refresh of attachment anchor positions. For demos where
+    // splines drive `fixedPos` over time (hat, sock, dress), this must
+    // be called before each `step()` so the AVBD forward sees the
+    // current anchor positions. Without it, AVBD keeps using the
+    // initial uploadAttachments() values and the simulation is
+    // INVARIANT to the spline params (hat/sock optimization silently
+    // produces zero forward sensitivity). `fixedPos` is the flat
+    // 3*nAttach float array (xyz tight, same layout as
+    // uploadAttachments). No-op if nAttach == 0 or buffer not
+    // allocated.
+    void updateAttachmentFixedPos(const float* fixedPos);
+
     // Upload triangle membrane (in-plane stretch) constraints.
     // `nTri` triangles with corner vertex indices `triIdx` (length
     // 3*nTri, interleaved (i0,i1,i2) per triangle), per-triangle

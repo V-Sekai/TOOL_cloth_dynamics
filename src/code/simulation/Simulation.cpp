@@ -1268,6 +1268,26 @@ void Simulation::step() {
 		}
 		auto _avbd_t0 = std::chrono::steady_clock::now();
 		sysMat[0].avbd->updateState(posF.data(), predF.data());
+
+		// CHI-111: re-upload attachment anchor positions every step.
+		// For demos where splines drive `fixedPointPos()` per timestep
+		// (hat / sock / dress), AVBD's bufAttachFixedPos must be
+		// refreshed before each forward step — otherwise the GPU uses
+		// the initial uploadAttachments values and the simulation is
+		// invariant to spline params (silently zero forward
+		// sensitivity → LBFGS sees zero meaningful gradient).
+		if (!sysMat[0].attachments.empty()) {
+			const uint32_t nA =
+					uint32_t(sysMat[0].attachments.size());
+			std::vector<float> xfixedNow(3 * nA);
+			for (uint32_t i = 0; i < nA; ++i) {
+				Vec3d fp = sysMat[0].attachments[i].fixedPointPos();
+				xfixedNow[3 * i + 0] = float(fp[0]);
+				xfixedNow[3 * i + 1] = float(fp[1]);
+				xfixedNow[3 * i + 2] = float(fp[2]);
+			}
+			sysMat[0].avbd->updateAttachmentFixedPos(xfixedNow.data());
+		}
 		// AVBD_AL=1 enables the augmented-Lagrangian dual ramp on
 		// attachments. After each outer iter's step(), dispatch
 		// stepDualAttachments() to nudge λ toward zero constraint
@@ -2498,12 +2518,28 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 	if (taskInfo.dL_density) ret.dL_ddensity = g.dL_ddensity;
 
 	if (nAttach > 0 && !g.dL_dxfixed.empty()) {
-		ret.dL_dxfixed = VecXd::Zero(static_cast<Eigen::Index>(g.dL_dxfixed.size()));
+		// CRITICAL: re-index from ATTACHMENT order (shim output) to
+		// FIXED-POINT order (DiffCloth convention). Each
+		// `attachments[a].pfixed_idx` indexes into `fixedPoints[]`;
+		// `Spline::pFixed` also indexes into fixedPoints[]. Without
+		// this re-indexing, the spline's `dxfixed_dspline(t) · slice`
+		// reads the wrong attachment's gradient → wrong direction.
+		const size_t nFixed = sysMat[0].fixedPoints.size();
+		ret.dL_dxfixed = VecXd::Zero(static_cast<Eigen::Index>(3 * nFixed));
 		ret.dL_dxfixed_accum =
-				VecXd::Zero(static_cast<Eigen::Index>(g.dL_dxfixed.size()));
-		for (size_t i = 0; i < g.dL_dxfixed.size(); ++i) {
-			ret.dL_dxfixed[static_cast<Eigen::Index>(i)] = g.dL_dxfixed[i];
-			ret.dL_dxfixed_accum[static_cast<Eigen::Index>(i)] = g.dL_dxfixed[i];
+				VecXd::Zero(static_cast<Eigen::Index>(3 * nFixed));
+		for (size_t a = 0; a < sysMat[0].attachments.size(); ++a) {
+			const int pf = sysMat[0].attachments[a].pfixed_idx;
+			if (pf < 0 || size_t(pf) >= nFixed) continue;
+			const size_t srcBase = 3 * a;
+			const size_t dstBase = 3 * size_t(pf);
+			if (srcBase + 2 >= g.dL_dxfixed.size()) continue;
+			ret.dL_dxfixed[dstBase + 0] = g.dL_dxfixed[srcBase + 0];
+			ret.dL_dxfixed[dstBase + 1] = g.dL_dxfixed[srcBase + 1];
+			ret.dL_dxfixed[dstBase + 2] = g.dL_dxfixed[srcBase + 2];
+			ret.dL_dxfixed_accum[dstBase + 0] = g.dL_dxfixed[srcBase + 0];
+			ret.dL_dxfixed_accum[dstBase + 1] = g.dL_dxfixed[srcBase + 1];
+			ret.dL_dxfixed_accum[dstBase + 2] = g.dL_dxfixed[srcBase + 2];
 		}
 	}
 
@@ -2524,12 +2560,15 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 					++splineId) {
 				Spline &s = splines[splineId];
 				const int pFixed = s.pFixed;
-				const size_t base = static_cast<size_t>(3 * pFixed);
-				if (base + 2 >= g.dL_dxfixed.size()) continue;
+				// Read from the re-indexed (fixed-point-order)
+				// `ret.dL_dxfixed`, not the shim's attachment-order
+				// `g.dL_dxfixed`.
+				const Eigen::Index base = 3 * static_cast<Eigen::Index>(pFixed);
+				if (base + 2 >= ret.dL_dxfixed.size()) continue;
 				Vec3d slice;
-				slice << g.dL_dxfixed[base + 0],
-						 g.dL_dxfixed[base + 1],
-						 g.dL_dxfixed[base + 2];
+				slice << ret.dL_dxfixed[base + 0],
+						 ret.dL_dxfixed[base + 1],
+						 ret.dL_dxfixed[base + 2];
 				MatXd dxfixed_dspline =
 						s.dxfixed_dcontrolPoints(forwardInfo_new.simDurartionFraction);
 				VecXd deltaGrad = dxfixed_dspline.transpose() * slice;
@@ -4919,12 +4958,39 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 	// was driven by AVBD (`sysMat[0].avbd` set up).
 	const bool useAvbdBwd = (std::getenv("USE_AVBD_BWD") != nullptr) &&
 			!sysMat.empty() && sysMat[0].avbd && sysMat[0].avbd->ok();
+	// CHI-111: truncated BPTT. Cap the chain to the K most-recent
+	// timesteps to bound the BPTT amplification. The AVBD per-step
+	// Jacobian has spectral radius ~√2 in some modes, so a 400-step
+	// chain amplifies ~2^200×; clipping (above) prevents NaN but
+	// distorts the gradient direction. Truncated BPTT preserves
+	// direction by dropping the chain past K steps — equivalent to
+	// using a degree-K Neumann approximation of the IFT solve.
+	// Default K=20 covers the dominant transient on cloth meshes
+	// (~5-10 timestep response time for stiff materials at h=10ms).
+	// Set AVBD_BWD_TRUNCATE_K=0 to disable truncation (full chain).
+	int avbdBwdTruncateK = 20;
+	if (const char *e = std::getenv("AVBD_BWD_TRUNCATE_K")) {
+		avbdBwdTruncateK = std::atoi(e);
+	}
+	// CHI-111: IFT-style adjoint. AVBD_BWD_IFT=1 disables BPTT entirely;
+	// each timestep's parameter gradient is computed as an independent
+	// IFT solve at that step's converged state. Per-vertex H from
+	// vbd_init+gather IS the IFT linear system (block-diagonal
+	// approximation of ∂r/∂x), so vbd_solve_apply_backward returns
+	// exactly λ = H⁻¹·(dL/dx*) — the adjoint at the converged
+	// equilibrium. Requires AVBD_ITERS≥4 (preferably 16+) so each
+	// forward step actually reaches equilibrium. Per CHI-99 finding 4,
+	// AVBD's per-vertex GS reaches static drape equilibrium in ~16
+	// iters; below that, the H is not a faithful IFT Jacobian.
+	const bool useAvbdIft = std::getenv("AVBD_BWD_IFT") != nullptr;
 	if (useAvbdBwd) {
 		std::printf("[avbd-bwd] USE_AVBD_BWD=1 — routing backward through "
-					"Simulation::stepBackwardAvbd\n");
+					"Simulation::stepBackwardAvbd (truncate K=%d, IFT=%d)\n",
+				avbdBwdTruncateK, useAvbdIft ? 1 : 0);
 	}
 
 	std::printf("backward started...");
+	int avbdBwdStepsBack = 0;
 	for (int idx = FORWARD_STEPS; idx >= 1; idx--) {
 		if (idx % 50 == 0) {
 			setTextBoxCB("backward:grad " + std::to_string(idx));
@@ -4940,16 +5006,74 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 				false);
 
 		if (useAvbdBwd) {
+			// CHI-111 IFT mode: each step's gradient is computed as an
+			// independent IFT solve at that step's converged state. No
+			// chain propagation. Skip steps with zero per-step loss
+			// contribution since they'd produce zero parameter grad
+			// without the chain (dL_dxinit is the only non-zero input
+			// in IFT mode).
+			if (useAvbdIft) {
+				if (dL_dxinit.norm() == 0.0) {
+					// No loss contribution at this step; skip the
+					// adjoint call but preserve already-accumulated
+					// param grads in `derivative`.
+					derivative.dL_dx = VecXd::Zero(3 * particles.size());
+					derivative.dL_dv = VecXd::Zero(3 * particles.size());
+					fullBackwardRecords.emplace_back(derivative);
+					continue;
+				}
+				BackwardInformation avbdRet = stepBackwardAvbd(
+						taskConfiguration, dL_dxinit, record);
+				for (int t = 0; t < Constraint::CONSTRAINT_NUM && t < 4; ++t) {
+					avbdRet.dL_dk_pertype[t] += derivative.dL_dk_pertype[t];
+				}
+				avbdRet.dL_ddensity += derivative.dL_ddensity;
+				if (avbdRet.dL_dxfixed_accum.rows() ==
+						derivative.dL_dxfixed_accum.rows()) {
+					avbdRet.dL_dxfixed_accum =
+							avbdRet.dL_dxfixed + derivative.dL_dxfixed_accum;
+				}
+				if (avbdRet.dL_dsplines.size() == derivative.dL_dsplines.size()) {
+					for (size_t s = 0; s < avbdRet.dL_dsplines.size(); ++s) {
+						for (size_t i = 0; i < avbdRet.dL_dsplines[s].size() &&
+										   i < derivative.dL_dsplines[s].size(); ++i) {
+							if (avbdRet.dL_dsplines[s][i].rows() ==
+									derivative.dL_dsplines[s][i].rows()) {
+								avbdRet.dL_dsplines[s][i] +=
+										derivative.dL_dsplines[s][i];
+							}
+						}
+					}
+				}
+				avbdRet.loss = derivative.loss;
+				// IFT: don't propagate dL_dx (no chain). Each step is
+				// independent.
+				avbdRet.dL_dx = VecXd::Zero(3 * particles.size());
+				avbdRet.dL_dv = VecXd::Zero(3 * particles.size());
+				derivative = avbdRet;
+				fullBackwardRecords.emplace_back(derivative);
+				continue;
+			}
+
+			// CHI-111 truncated BPTT: skip steps past the K-step horizon
+			// from the loss origin (step FORWARD_STEPS). Keeps the
+			// already-accumulated param gradients (from the recent K
+			// steps) intact; just stops propagating the position
+			// cotangent further into the past.
+			if (avbdBwdTruncateK > 0 && avbdBwdStepsBack >= avbdBwdTruncateK) {
+				derivative.dL_dx = VecXd::Zero(3 * particles.size());
+				derivative.dL_dv = VecXd::Zero(3 * particles.size());
+				++avbdBwdStepsBack;
+				fullBackwardRecords.emplace_back(derivative);
+				continue;
+			}
+
 			// Upstream cotangent for this step = accumulated dL/dx
 			// from later steps + any per-step loss-grad contribution.
 			VecXd dL_dx_in = derivative.dL_dx + dL_dxinit;
-			// Apply the same gradient clipping PD uses (Simulation.h:
-			// `gradientClippingThreshold` per vertex). Without this, the
-			// AVBD adjoint chain can amplify exponentially through long
-			// horizons (we saw ~2× per step on the hat demo's 400-step
-			// trajectory). Clamping the cotangent norm here is the
-			// canonical truncated-BPTT fix and matches what PD does
-			// at the top of `stepBackward`.
+			// Gradient clipping (safety belt — even within the
+			// truncated K-step window, transient eigenmodes can spike).
+			// Matches PD's threshold (Simulation.h).
 			if (gradientClipping) {
 				const double maxNorm =
 						gradientClippingThreshold * particles.size();
@@ -4990,6 +5114,7 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 			// zero so downstream consumers see a defined value.
 			avbdRet.dL_dv = VecXd::Zero(3 * particles.size());
 			derivative = avbdRet;
+			++avbdBwdStepsBack;
 		} else {
 			// backward from [x,v]_{idx} --> [x,v]_{idx-1}, calculate dL/dx_{idx-1}
 			derivative = stepBackward(taskConfiguration, derivative, record,
