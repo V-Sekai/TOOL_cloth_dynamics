@@ -1252,14 +1252,22 @@ void Simulation::step() {
 		for (int it = 0; it < firstHalf; ++it) {
 			rc = sysMat[0].avbd->step();
 			if (rc != 0) break;
-			if (s_avbdAl) sysMat[0].avbd->stepDualAttachments();
+			if (s_avbdAl) {
+				sysMat[0].avbd->stepDualAttachments();
+				sysMat[0].avbd->stepDualMembrane();
+				sysMat[0].avbd->stepDualBending();
+			}
 		}
 		std::vector<float> avbdPosHalf;
 		if (rc == 0 && firstHalf > 0)
 			sysMat[0].avbd->readPositions(avbdPosHalf);
 		for (int it = firstHalf; it < s_avbdIters && rc == 0; ++it) {
 			rc = sysMat[0].avbd->step();
-			if (rc == 0 && s_avbdAl) sysMat[0].avbd->stepDualAttachments();
+			if (rc == 0 && s_avbdAl) {
+				sysMat[0].avbd->stepDualAttachments();
+				sysMat[0].avbd->stepDualMembrane();
+				sysMat[0].avbd->stepDualBending();
+			}
 		}
 		auto _avbd_t1 = std::chrono::steady_clock::now();
 		const long long us =
