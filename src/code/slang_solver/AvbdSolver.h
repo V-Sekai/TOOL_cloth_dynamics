@@ -12,7 +12,7 @@
 //
 // AVBD is one algorithm covering cloth, attachment, triangle membrane,
 // and dihedral bending in a single per-vertex block update. See
-// todo.md for the full roadmap.
+// Linear CHI-99 (AVBD port — status & roadmap) for the full picture.
 //
 // Lifecycle:
 //   - Construct once per simulation scene (loads metallibs, builds PSOs).
@@ -195,6 +195,57 @@ public:
     // Used by tests.
     void readSpringForce(std::vector<float>& gradA_out,
                          std::vector<float>& hess_out) const;
+
+    // ------------------------------------------------------------------
+    // Reverse-mode adjoint (PR-G / CHI-13). Computes parameter gradients
+    // for L-BFGS-B inverse design. Call AFTER step() completes; relies
+    // on forward state still being in the GPU buffers.
+    //
+    // Pipeline (reverse order of forward):
+    //   1. vbd_solve_apply_backward      (per-vertex, 3x3 inverse adjoint)
+    //   2. vbd_gather_{spring,attach,tri,bend}_backward
+    //                                   (per-vertex → per-constraint cotangents)
+    //   3. attachment_force_al_backward (overwrites attached vertices)
+    //   4. spring_force_backward + triangle_membrane_force_al_backward +
+    //      triangle_bending_force_al_backward
+    //                                   (per-constraint cotangents +
+    //                                    per-constraint position cotangents)
+    //   5. forward gather kernels reused on per-constraint position
+    //      cotangents to additively scatter into v_positions (sign flip
+    //      via existing role buffers).
+    //
+    // `v_positions_loss` is the input cotangent ∂L/∂x_out (length 3*nVerts,
+    // xyz tightly packed). After stepBackward returns, parameter gradients
+    // can be read via the read*Grad() accessors below.
+    //
+    // Returns 0 on success, -1 if not set up or step() not yet called.
+    int stepBackward(const float* v_positions_loss);
+
+    // Read parameter gradients populated by stepBackward(). Each
+    // vector is resized to the appropriate length:
+    //   readPositionsGrad  → 3 * nVerts   (xyz)
+    //   readSpringGrad     → restLen (nSprings) + stiffness (nSprings)
+    //   readAttachGrad     → fixedPos (3*nAttach xyz) + stiffness (nAttach)
+    //                        + lambda (3*nAttach xyz)
+    //   readTriGrad        → stiffness (nTri) + lambda0 (3*nTri xyz)
+    //                        + lambda1 (3*nTri xyz)
+    //   readBendGrad       → nTarget (nBend) + stiffness (nBend)
+    //                        + lambda (3*nBend xyz)
+    //
+    // Each accessor is safe to call after stepBackward() succeeds; the
+    // corresponding constraint type must have been uploaded.
+    void readPositionsGrad(std::vector<float>& out) const;
+    void readSpringGrad(std::vector<float>& restLen_grad,
+                        std::vector<float>& stiff_grad) const;
+    void readAttachGrad(std::vector<float>& fixedPos_grad,
+                        std::vector<float>& stiff_grad,
+                        std::vector<float>& lambda_grad) const;
+    void readTriGrad(std::vector<float>& stiff_grad,
+                     std::vector<float>& lambda0_grad,
+                     std::vector<float>& lambda1_grad) const;
+    void readBendGrad(std::vector<float>& nTarget_grad,
+                      std::vector<float>& stiff_grad,
+                      std::vector<float>& lambda_grad) const;
 
 private:
     struct Impl;

@@ -134,15 +134,80 @@ int main(int argc, char** argv) {
     };
     for (uint32_t i = 0; i < 3 * N; ++i) check(posOut[i], expected_pos[i], "pos", i);
 
-    if (fails == 0) {
-        std::printf("test_avbd_solver: OK (full AVBD step on %u verts: %u spring %u attach %u tri %u bend, max_abs_diff=%g)\n",
-                    N, N_S, N_A, N_T, N_B, max_abs_diff);
-        std::printf("  v0 pos: (%g, %g, %g) — expected (7/8, 15/7, 12/7)\n",  posOut[0], posOut[1], posOut[2]);
-        std::printf("  v1 pos: (%g, %g, %g) — expected (12/5, 1, 0)\n",       posOut[3], posOut[4], posOut[5]);
-        std::printf("  v2 pos: (%g, %g, %g) — expected (0, 25/8, 5)\n",       posOut[6], posOut[7], posOut[8]);
-        std::printf("  v3 pos: (%g, %g, %g) — expected (3, 8/3, 0)\n",        posOut[9], posOut[10], posOut[11]);
-        return 0;
+    if (fails != 0) {
+        std::fprintf(stderr, "test_avbd_solver: forward %d FAIL\n", fails);
+        return 1;
     }
-    std::fprintf(stderr, "test_avbd_solver: %d FAIL\n", fails);
-    return 1;
+    std::printf("test_avbd_solver: forward OK (full AVBD step on %u verts: %u spring %u attach %u tri %u bend, max_abs_diff=%g)\n",
+                N, N_S, N_A, N_T, N_B, max_abs_diff);
+    std::printf("  v0 pos: (%g, %g, %g) — expected (7/8, 15/7, 12/7)\n",  posOut[0], posOut[1], posOut[2]);
+    std::printf("  v1 pos: (%g, %g, %g) — expected (12/5, 1, 0)\n",       posOut[3], posOut[4], posOut[5]);
+    std::printf("  v2 pos: (%g, %g, %g) — expected (0, 25/8, 5)\n",       posOut[6], posOut[7], posOut[8]);
+    std::printf("  v3 pos: (%g, %g, %g) — expected (3, 8/3, 0)\n",        posOut[9], posOut[10], posOut[11]);
+
+    // ----- PR-G / CHI-13: backward smoke ----------------------------------
+    // Pass an arbitrary loss cotangent on the final positions and confirm
+    // stepBackward() runs end-to-end and produces non-degenerate gradients
+    // for every parameter category. This is a smoke test — full FD
+    // validation lives in tests/slang_validate/*_backward_test.cpp.
+    std::vector<float> vLoss(3 * N, 0.0f);
+    // Loss = x_0_z (sensitive to all params via v0's update). Cotangent:
+    // (0,0,1) on vertex 0, zero on others.
+    vLoss[2] = 1.0f;
+    const int rcBwd = solver.stepBackward(vLoss.data());
+    if (rcBwd != 0) {
+        std::fprintf(stderr, "test_avbd_solver: stepBackward returned %d\n", rcBwd);
+        return 1;
+    }
+
+    std::vector<float> dPos, dSpringL, dSpringK;
+    std::vector<float> dAttachFixed, dAttachK, dAttachLam;
+    std::vector<float> dTriK, dTriLam0, dTriLam1;
+    std::vector<float> dBendN, dBendK, dBendLam;
+    solver.readPositionsGrad(dPos);
+    solver.readSpringGrad(dSpringL, dSpringK);
+    solver.readAttachGrad(dAttachFixed, dAttachK, dAttachLam);
+    solver.readTriGrad(dTriK, dTriLam0, dTriLam1);
+    solver.readBendGrad(dBendN, dBendK, dBendLam);
+
+    auto allFinite = [](const std::vector<float>& v) {
+        for (float x : v) if (!std::isfinite(x)) return false;
+        return true;
+    };
+    auto reportNF = [](const std::vector<float>& v, const char* name) {
+        for (size_t i = 0; i < v.size(); ++i) {
+            if (!std::isfinite(v[i])) {
+                std::fprintf(stderr, "  %s[%zu] = %g (non-finite)\n", name, i, v[i]);
+            }
+        }
+    };
+    bool bad = false;
+    if (!allFinite(dPos))         { reportNF(dPos,         "dPos");         bad = true; }
+    if (!allFinite(dSpringL))     { reportNF(dSpringL,     "dSpringL");     bad = true; }
+    if (!allFinite(dSpringK))     { reportNF(dSpringK,     "dSpringK");     bad = true; }
+    if (!allFinite(dAttachFixed)) { reportNF(dAttachFixed, "dAttachFixed"); bad = true; }
+    if (!allFinite(dAttachK))     { reportNF(dAttachK,     "dAttachK");     bad = true; }
+    if (!allFinite(dAttachLam))   { reportNF(dAttachLam,   "dAttachLam");   bad = true; }
+    if (!allFinite(dTriK))        { reportNF(dTriK,        "dTriK");        bad = true; }
+    if (!allFinite(dTriLam0))     { reportNF(dTriLam0,     "dTriLam0");     bad = true; }
+    if (!allFinite(dTriLam1))     { reportNF(dTriLam1,     "dTriLam1");     bad = true; }
+    if (!allFinite(dBendN))       { reportNF(dBendN,       "dBendN");       bad = true; }
+    if (!allFinite(dBendK))       { reportNF(dBendK,       "dBendK");       bad = true; }
+    if (!allFinite(dBendLam))     { reportNF(dBendLam,     "dBendLam");     bad = true; }
+    if (bad) {
+        std::fprintf(stderr, "test_avbd_solver: backward produced non-finite gradients\n");
+        return 1;
+    }
+
+    std::printf("test_avbd_solver: backward OK (stepBackward + read accessors)\n");
+    std::printf("  ∂L/∂x      : v0=(%.3g, %.3g, %.3g)  v1=(%.3g, %.3g, %.3g)\n",
+                dPos[0], dPos[1], dPos[2], dPos[3], dPos[4], dPos[5]);
+    std::printf("  ∂L/∂L (s0) : %.3g     ∂L/∂k (s0)  : %.3g\n", dSpringL[0], dSpringK[0]);
+    std::printf("  ∂L/∂anchor : (%.3g, %.3g, %.3g)  ∂L/∂k_attach: %.3g\n",
+                dAttachFixed[0], dAttachFixed[1], dAttachFixed[2], dAttachK[0]);
+    std::printf("  ∂L/∂k_tri  : %.3g     ∂L/∂λ0_tri  : (%.3g, %.3g, %.3g)\n",
+                dTriK[0], dTriLam0[0], dTriLam0[1], dTriLam0[2]);
+    std::printf("  ∂L/∂n_bend : %.3g     ∂L/∂k_bend  : %.3g\n", dBendN[0], dBendK[0]);
+
+    return 0;
 }
