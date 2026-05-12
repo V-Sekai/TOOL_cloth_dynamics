@@ -24,7 +24,7 @@ LEAN_DIR   := $(REPO_ROOT)/lean
 
 # Metal kernels we benchmark on real GPU (Tier-3 perf). The full slang →
 # air → metallib pipeline runs once per kernel listed here.
-METAL_KERNELS := spring_project saxpby spmv dot_reduce_serial dot_reduce assemble_b cg_alpha cg_beta saxpby_indirect spmv_df32 saxpby_indirect_df32 spring_force vbd_init vbd_solve_apply vbd_gather_spring vbd_gather_attachment vbd_gather_triangle vbd_gather_bending attachment_force_al attachment_dual_update triangle_membrane_force_al triangle_membrane_dual_update triangle_bending_force_al triangle_bending_dual_update self_collision_scan vbd_solve_apply_backward vbd_init_backward vbd_gather_triangle_backward vbd_gather_attachment_backward vbd_gather_bending_backward vbd_gather_spring_backward
+METAL_KERNELS := spring_project saxpby spmv dot_reduce_serial dot_reduce assemble_b cg_alpha cg_beta saxpby_indirect spmv_df32 saxpby_indirect_df32 spring_force vbd_init vbd_solve_apply vbd_gather_spring vbd_gather_attachment vbd_gather_triangle vbd_gather_bending attachment_force_al attachment_dual_update triangle_membrane_force_al triangle_membrane_dual_update triangle_bending_force_al triangle_bending_dual_update self_collision_scan vbd_solve_apply_backward vbd_init_backward vbd_gather_triangle_backward vbd_gather_attachment_backward vbd_gather_bending_backward vbd_gather_spring_backward attachment_force_al_backward
 METALLIBS     := $(addprefix $(EMITTED)/,$(addsuffix .metallib,$(METAL_KERNELS)))
 
 CXX        ?= clang++

@@ -55,6 +55,7 @@ private def kernels : List (String × SlangShaderModule) :=
   , ("vbd_gather_attachment_backward", VbdGatherAttachmentBackward.shader)
   , ("vbd_gather_bending_backward", VbdGatherBendingBackward.shader)
   , ("vbd_gather_spring_backward", VbdGatherSpringBackward.shader)
+  , ("attachment_force_al_backward", AttachmentForceAlBackward.shader)
   ]
 
 def main (args : List String) : IO UInt32 := do
