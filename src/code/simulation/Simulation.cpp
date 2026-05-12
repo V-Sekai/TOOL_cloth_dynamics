@@ -32,6 +32,7 @@
 #ifdef __APPLE__
 #include "../slang_solver/MetalCGSolver.h"
 #include "../slang_solver/AvbdSolver.h"
+#include "../slang_solver/AvbdBackwardShim.h"
 #endif
 
 namespace {
@@ -2404,6 +2405,106 @@ Simulation::stepBackward(Simulation::BackwardTaskInformation &taskInfo,
 	ret.dL_dx = dL_dx;
 	ret.dL_dv = dL_dv;
 	ret.loss = gradient_new.loss;
+
+	return ret;
+}
+
+// CHI-14 Brick D: AVBD-backed single-step adjoint.
+//
+// Wraps `cloth::avbdBackwardShim` and lifts the aggregated cotangents
+// into DiffCloth's `BackwardInformation`. Designed for inverse-design
+// loops where the forward `step()` was driven by AVBD (`sysMat[0].avbd`
+// is set up and the `bufPositionsPreStep` snapshot is fresh).
+//
+// What this populates:
+//   dL_dx                  — per-vertex position cotangent on x_after
+//   dL_dk_pertype[4]       — per-type stiffness gradient (SPRING /
+//                            ATTACH / TRIANGLE / BENDING). Gated by
+//                            taskInfo.dL_dk_pertype[i].
+//   dL_ddensity            — Σ_v v_mass[v]·area_per_vertex[v].
+//                            Gated by taskInfo.dL_density.
+//   dL_dxfixed             — per-attachment anchor cotangent. Gated by
+//                            taskInfo.dL_dcontrolPoints.
+//   dL_dxfixed_accum       — same (per-step here; outer loop sums).
+//
+// What this leaves at zero (AVBD doesn't currently parameterise these):
+//   dL_dv, dL_dfext, dL_dwind, dL_dwindtimestep,
+//   dL_dconstantForceField, dL_dsplines, dL_dmu.
+Simulation::BackwardInformation Simulation::stepBackwardAvbd(
+		const Simulation::BackwardTaskInformation &taskInfo,
+		const VecXd &dL_dx_new) {
+	Simulation::BackwardInformation ret = backwardInfoDefault;
+	const uint32_t nV = static_cast<uint32_t>(particles.size());
+
+	if (sysMat.empty() || !sysMat[0].avbd || !sysMat[0].avbd->ok()) {
+		// AVBD not set up — return a zero-filled BackwardInfo so the
+		// optimizer sees a well-formed gradient (zero) rather than NaN.
+		ret.dL_dx = VecXd::Zero(3 * nV);
+		return ret;
+	}
+
+	if (static_cast<uint32_t>(dL_dx_new.size()) != 3 * nV) {
+		Logging::logColor("[avbd-bwd] dL_dx_new size mismatch: got " +
+								std::to_string(dL_dx_new.size()) +
+								" expected " + std::to_string(3 * nV) + "\n",
+				Logging::LogColor::RED);
+		ret.dL_dx = VecXd::Zero(3 * nV);
+		return ret;
+	}
+
+	// Count per-type constraints from sysMat (used to size shim outputs).
+	uint32_t nAttach = 0, nTri = 0, nBend = 0;
+	for (const Constraint *c : sysMat[0].constraints) {
+		if (!c) continue;
+		switch (c->constraintType) {
+		case Constraint::CONSTRAINT_ATTACHMENT:       ++nAttach; break;
+		case Constraint::CONSTRAINT_TRIANGLE:         ++nTri;    break;
+		case Constraint::CONSTRAINT_TRIANGLE_BENDING: ++nBend;   break;
+		default: break;
+		}
+	}
+
+	// Extract per-vertex area from the 3N×3N diagonal sparse Area matrix.
+	// DiffCloth's Area has identical xyz blocks per vertex; sample x.
+	std::vector<double> vertex_area;
+	if (taskInfo.dL_density && Area.rows() >= int(3 * nV)) {
+		vertex_area.resize(nV, 0.0);
+		for (uint32_t v = 0; v < nV; ++v) {
+			vertex_area[v] = Area.coeff(3 * v, 3 * v);
+		}
+	}
+
+	// Dispatch + aggregate.
+	cloth::AvbdParamGradients g;
+	const double *area_ptr = vertex_area.empty() ? nullptr : vertex_area.data();
+	if (cloth::avbdBackwardShim(*sysMat[0].avbd, nV, nAttach, nTri, nBend,
+								  dL_dx_new.data(), area_ptr, g) != 0) {
+		Logging::logColor("[avbd-bwd] avbdBackwardShim failed\n",
+				Logging::LogColor::RED);
+		ret.dL_dx = VecXd::Zero(3 * nV);
+		return ret;
+	}
+
+	// Lift AvbdParamGradients into BackwardInformation.
+	ret.dL_dx = VecXd::Zero(3 * nV);
+	for (uint32_t i = 0; i < 3 * nV; ++i) {
+		ret.dL_dx[i] = g.dL_dx[i];
+	}
+	for (int t = 0; t < Constraint::CONSTRAINT_NUM && t < 4; ++t) {
+		ret.dL_dk_pertype[t] =
+				taskInfo.dL_dk_pertype[t] ? g.dL_dk_pertype[t] : 0.0;
+	}
+	if (taskInfo.dL_density) ret.dL_ddensity = g.dL_ddensity;
+
+	if (nAttach > 0 && !g.dL_dxfixed.empty()) {
+		ret.dL_dxfixed = VecXd::Zero(static_cast<Eigen::Index>(g.dL_dxfixed.size()));
+		ret.dL_dxfixed_accum =
+				VecXd::Zero(static_cast<Eigen::Index>(g.dL_dxfixed.size()));
+		for (size_t i = 0; i < g.dL_dxfixed.size(); ++i) {
+			ret.dL_dxfixed[static_cast<Eigen::Index>(i)] = g.dL_dxfixed[i];
+			ret.dL_dxfixed_accum[static_cast<Eigen::Index>(i)] = g.dL_dxfixed[i];
+		}
+	}
 
 	return ret;
 }
