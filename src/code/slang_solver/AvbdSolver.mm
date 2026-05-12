@@ -601,6 +601,12 @@ void AvbdSolver::readScratch(std::vector<float>& gScratch_out,
     std::memcpy(hScratch_out.data(), impl_->bufHScratch.contents, 6 * n * sizeof(float));
 }
 
+void AvbdSolver::updateState(const float* positions, const float* predicted) {
+    if (!ok() || !impl_->meshReady) return;
+    uploadVec3Padded(impl_->bufPositions, positions, impl_->nVerts);
+    uploadVec3Padded(impl_->bufPredicted, predicted, impl_->nVerts);
+}
+
 void AvbdSolver::readPositions(std::vector<float>& positions_out) const {
     if (!ok() || !impl_->meshReady) {
         positions_out.clear();
