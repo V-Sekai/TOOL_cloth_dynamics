@@ -2432,7 +2432,8 @@ Simulation::stepBackward(Simulation::BackwardTaskInformation &taskInfo,
 //   dL_dconstantForceField, dL_dsplines, dL_dmu.
 Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 		const Simulation::BackwardTaskInformation &taskInfo,
-		const VecXd &dL_dx_new) {
+		const VecXd &dL_dx_new,
+		const ForwardInformation &forwardInfo_new) {
 	Simulation::BackwardInformation ret = backwardInfoDefault;
 	const uint32_t nV = static_cast<uint32_t>(particles.size());
 
@@ -2503,6 +2504,40 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 		for (size_t i = 0; i < g.dL_dxfixed.size(); ++i) {
 			ret.dL_dxfixed[static_cast<Eigen::Index>(i)] = g.dL_dxfixed[i];
 			ret.dL_dxfixed_accum[static_cast<Eigen::Index>(i)] = g.dL_dxfixed[i];
+		}
+	}
+
+	// CHI-14 Brick A1: spline control-point gradient.
+	// Each spline pins one fixed point; this step's ∂L/∂xfixed_pFixed
+	// chains through dxfixed_dcontrolPoints(t) to give the per-spline
+	// parameter gradient. Accumulated host-side across steps in the
+	// runBackwardTask loop.
+	if (taskInfo.dL_dcontrolPoints && !ret.dL_dsplines.empty()) {
+		for (size_t sysMatId = 0; sysMatId < sysMat.size() &&
+								   sysMatId < ret.dL_dsplines.size();
+				++sysMatId) {
+			std::vector<Spline> &splines =
+					sysMat[sysMatId].controlPointSplines;
+			for (size_t splineId = 0;
+					splineId < splines.size() &&
+					splineId < ret.dL_dsplines[sysMatId].size();
+					++splineId) {
+				Spline &s = splines[splineId];
+				const int pFixed = s.pFixed;
+				const size_t base = static_cast<size_t>(3 * pFixed);
+				if (base + 2 >= g.dL_dxfixed.size()) continue;
+				Vec3d slice;
+				slice << g.dL_dxfixed[base + 0],
+						 g.dL_dxfixed[base + 1],
+						 g.dL_dxfixed[base + 2];
+				MatXd dxfixed_dspline =
+						s.dxfixed_dcontrolPoints(forwardInfo_new.simDurartionFraction);
+				VecXd deltaGrad = dxfixed_dspline.transpose() * slice;
+				if (deltaGrad.rows() ==
+						ret.dL_dsplines[sysMatId][splineId].rows()) {
+					ret.dL_dsplines[sysMatId][splineId] += deltaGrad;
+				}
+			}
 		}
 	}
 
@@ -4908,8 +4943,23 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 			// Upstream cotangent for this step = accumulated dL/dx
 			// from later steps + any per-step loss-grad contribution.
 			VecXd dL_dx_in = derivative.dL_dx + dL_dxinit;
+			// Apply the same gradient clipping PD uses (Simulation.h:
+			// `gradientClippingThreshold` per vertex). Without this, the
+			// AVBD adjoint chain can amplify exponentially through long
+			// horizons (we saw ~2× per step on the hat demo's 400-step
+			// trajectory). Clamping the cotangent norm here is the
+			// canonical truncated-BPTT fix and matches what PD does
+			// at the top of `stepBackward`.
+			if (gradientClipping) {
+				const double maxNorm =
+						gradientClippingThreshold * particles.size();
+				const double n = dL_dx_in.norm();
+				if (n > maxNorm) {
+					dL_dx_in *= maxNorm / n;
+				}
+			}
 			BackwardInformation avbdRet =
-					stepBackwardAvbd(taskConfiguration, dL_dx_in);
+					stepBackwardAvbd(taskConfiguration, dL_dx_in, record);
 			// Accumulate per-type stiffness, density, anchor cotangents.
 			for (int t = 0; t < Constraint::CONSTRAINT_NUM && t < 4; ++t) {
 				avbdRet.dL_dk_pertype[t] += derivative.dL_dk_pertype[t];
@@ -4919,6 +4969,21 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 					derivative.dL_dxfixed_accum.rows()) {
 				avbdRet.dL_dxfixed_accum =
 						avbdRet.dL_dxfixed + derivative.dL_dxfixed_accum;
+			}
+			// Accumulate per-spline gradients across steps (the AVBD
+			// shim writes this step's contribution into avbdRet; sum
+			// with the carryover from later steps in `derivative`).
+			if (avbdRet.dL_dsplines.size() == derivative.dL_dsplines.size()) {
+				for (size_t s = 0; s < avbdRet.dL_dsplines.size(); ++s) {
+					for (size_t i = 0; i < avbdRet.dL_dsplines[s].size() &&
+									   i < derivative.dL_dsplines[s].size(); ++i) {
+						if (avbdRet.dL_dsplines[s][i].rows() ==
+								derivative.dL_dsplines[s][i].rows()) {
+							avbdRet.dL_dsplines[s][i] +=
+									derivative.dL_dsplines[s][i];
+						}
+					}
+				}
 			}
 			avbdRet.loss = derivative.loss;
 			// AVBD doesn't compute dL_dv (velocity cotangent); set to

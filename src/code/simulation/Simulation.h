@@ -631,7 +631,8 @@ public:
 	// default values — AVBD doesn't currently parameterise these.
 	BackwardInformation stepBackwardAvbd(
 			const Simulation::BackwardTaskInformation &taskInfo,
-			const VecXd &dL_dx_new);
+			const VecXd &dL_dx_new,
+			const ForwardInformation &forwardInfo_new);
 
 	void resetForwardRecordsFromFolder(std::string subFolder) {
 		std::vector<Vec3d> modelPoints;
