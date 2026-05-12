@@ -1921,6 +1921,54 @@ void Simulation::step() {
 				std::printf("[avbd-contact] step %zu projected %zu vert/primitive penetrations\n",
 				            forwardRecords.size(), projHits);
 		}
+
+		// AVBD-side cloth-cloth self-collision resolution.
+		// Reuses the existing collisionDetection() spatial-hash with
+		// velocity = 0 so the swept test reduces to point overlap.
+		// For each detected pair, push apart symmetrically along the
+		// connecting line until the gap >= sum-of-radii. Runs up to
+		// `AVBD_SELF_PASSES` (default 2) Gauss-Seidel-style passes
+		// since resolving one pair can introduce new overlaps in dense
+		// folds. AVBD_NO_SELF_COLLISION=1 disables. Respects DiffCloth's
+		// existing Simulation::selfcollisionEnabled flag.
+		const bool s_avbdNoSelf = (std::getenv("AVBD_NO_SELF_COLLISION") != nullptr);
+		static const int s_avbdSelfPasses = []() {
+			if (const char* e = std::getenv("AVBD_SELF_PASSES"))
+				return std::max(1, std::atoi(e));
+			return 2;
+		}();
+		if (!s_avbdNoSelf && selfcollisionEnabled) {
+			size_t resolvedTotal = 0;
+			VecXd v_zero = VecXd::Zero(3 * particles.size());
+			for (int pass = 0; pass < s_avbdSelfPasses; ++pass) {
+				VecXd x_now(3 * particles.size());
+				for (size_t i = 0; i < particles.size(); ++i)
+					x_now.segment(3 * i, 3) = particles[i].pos;
+				auto info = collisionDetection(x_now, v_zero,
+				                                xnew_n_primitives, v_n_primitives);
+				size_t passResolved = 0;
+				for (auto& sc : info.first.second) {
+					if (!sc.collides) continue;
+					Particle& a = particles[sc.particleId1];
+					Particle& b = particles[sc.particleId2];
+					const Vec3d posDiff = a.pos - b.pos;
+					const double dist = posDiff.norm();
+					const double thresh = a.radii + b.radii;
+					if (dist < thresh && dist > 1e-10) {
+						const double overlap = thresh - dist;
+						const Vec3d push = (posDiff / dist) * (overlap * 0.5);
+						a.pos += push;
+						b.pos -= push;
+						++passResolved;
+					}
+				}
+				resolvedTotal += passResolved;
+				if (passResolved == 0) break;  // settled
+			}
+			if (resolvedTotal > 0)
+				std::printf("[avbd-selfcoll] step %zu resolved %zu pair penetrations across %d passes\n",
+				            forwardRecords.size(), resolvedTotal, s_avbdSelfPasses);
+		}
 	}
 
 	// AVBD_DUMP_STEP=<N> writes /tmp/{avbd,pd}_drape_step_<N>.obj at
