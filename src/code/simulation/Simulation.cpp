@@ -1666,6 +1666,26 @@ void Simulation::step() {
 	returnRecord.v = v_new;
 	returnRecord.f = f;
 	returnRecord.r = r;
+
+#ifdef __APPLE__
+	// Per-step PD displacement |x_new − x_n| for direct comparison
+	// with avbd-shadow's dxMax/dxMean (which measures |avbd − x_n|).
+	// If pd_dx_max and avbd_dx_max diverge much, the AVBD solve
+	// disagrees with PD on what implicit Euler "should" produce.
+	if (g_useAvbd && currentSysmatId == 0 && sysMat[0].avbd && sysMat[0].avbd->ok()) {
+		double pdMax = 0.0, pdMean = 0.0;
+		const size_t nDof = size_t(x_new.size());
+		for (size_t i = 0; i < nDof; ++i) {
+			const double dx = std::fabs(x_new[i] - x_n[i]);
+			if (dx > pdMax) pdMax = dx;
+			pdMean += dx;
+		}
+		pdMean /= double(nDof);
+		std::printf("[pd-step]     step %zu  dof=%zu  pd|Δx|_max=%g  pd|Δx|_mean=%g\n",
+		            forwardRecords.size(), nDof, pdMax, pdMean);
+	}
+#endif
+
 	returnRecord.timer = timeSteptimer.getReportMicroseconds();
 	returnRecord.accumTimer =
 			Timer::addTimer(returnRecord.timer.timeMicroseconds,
