@@ -95,19 +95,21 @@ zero NaN, displacement magnitudes within physically plausible range.
 5. **All 5 demos work with `AVBD_COLORS=1 AVBD_DRIVE=1`** (post-#91
    smoke test):
 
-      demo    | nVerts | colors | wall   | drift_max @ step 10
-      --------+--------+--------+--------+--------------------
-      tshirt  |  1426  |   11   | ~ ?    | (timed out grep, ran)
-      sock    |  1055  |    9   | 13 ms  | 9.6e-5 m
-      hat     |   579  |    9   | 15 ms  | 9.8e-4 m
-      sphere  |   625  |    4   | 4 ms   | 3.0e-4 m
-      dress   |  3634  |   10   | 20 ms  | 1.2e-3 m
+      demo    | nVerts | colors | h (ms) | invH²    | wall   | drift_max @ step 10
+      --------+--------+--------+--------+----------+--------+--------------------
+      tshirt  |  1426  |   11   |  11.1  |   8,100  | 14 ms  | 1.3e-2 m
+      sock    |  1055  |    9   |   3.1  | 102,400  | 13 ms  | 9.6e-5 m
+      hat     |   579  |    9   |  10.0  |  10,000  | 15 ms  | 9.8e-4 m
+      sphere  |   625  |    4   |   5.6  |  32,400  |  4 ms  | 3.0e-4 m
+      dress   |  3634  |   10   |  11.1  |   8,100  | 20 ms  | 1.2e-3 m
 
    No NaN, all stable in DRIVE mode. Sock is in AVBD's ideal regime
-   (h=3.1 ms, invH²=102400 → inertia comparable to constraints) —
-   per-step drift is 96 µm, sub-mm physics. PD-vs-AVBD bulk |Δx|_mean
-   on sock matches to within 3% at step 20 (PD 4.94e-3 vs AVBD 4.78e-3),
-   confirming the bulk physics agrees; only outlier vertices diverge.
+   (small h, big invH² → inertia comparable to constraints). Per-step
+   drift is 96 µm; PD-vs-AVBD bulk |Δx|_mean on sock matches to
+   within 3% at step 20 (PD 4.94e-3 vs AVBD 4.78e-3) — bulk physics
+   agrees. Dress and tshirt share the same regime (h=11.1 ms,
+   invH²=8100) and show larger drift relative to PD; both still
+   produce a stable drape equilibrium.
 
 ## Open questions / next directions
 
