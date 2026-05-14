@@ -157,13 +157,14 @@ double Simulation::calculateMaxTriangleDeformation(VecXd &x_new) {
 	return maxDeformation;
 }
 
-const double Simulation::fillForces(VecXd &f_int, VecXd &f_ext, const VecXd &v,
-		const VecXd &x, double t_now) {
-	// calculate forces
-	f_int.setZero();
-	// Internal forces calculation not needed for PD
-	f_ext.setZero();
-	// externalForces
+const double Simulation::fillForces(std::vector<float> &f_int,
+		std::vector<float> &f_ext, const VecXd &v, const VecXd &x, double t_now) {
+	// CHI-11 subtask 4: per-vertex AoS force buffers. f_int stays in
+	// the signature for symmetry with the old API but is unused — PD
+	// never reads internal forces from this path, it computes them
+	// through the constraint-projection matrix.
+	std::fill(f_int.begin(), f_int.end(), 0.0f);
+	std::fill(f_ext.begin(), f_ext.end(), 0.0f);
 	double windFactor = 1.0;
 
 	switch (sceneConfig.windConfig) {
@@ -188,11 +189,13 @@ const double Simulation::fillForces(VecXd &f_int, VecXd &f_ext, const VecXd &v,
 	}
 
 	if (enableConstantForcefield) {
-		f_ext += external_force_field;
+		const Eigen::Index n = external_force_field.size();
+		for (Eigen::Index i = 0; i < n; ++i) {
+			f_ext[size_t(i)] += float(external_force_field[i]);
+		}
 	}
 
-	//  double windFactor = 1.0;
-	for (int i = 0; i < particles.size(); i++) {
+	for (int i = 0; i < (int)particles.size(); i++) {
 		Particle &p = particles[i];
 		Vec3d f_i(0, 0, 0);
 		if (gravityEnabled)
@@ -207,7 +210,10 @@ const double Simulation::fillForces(VecXd &f_int, VecXd &f_ext, const VecXd &v,
 			f_i += windf_i;
 		}
 
-		f_ext.segment(p.idx * 3, 3) += f_i;
+		const size_t base = size_t(p.idx) * 3;
+		f_ext[base + 0] += float(f_i[0]);
+		f_ext[base + 1] += float(f_i[1]);
+		f_ext[base + 2] += float(f_i[2]);
 	}
 
 	return windFactor;
@@ -1212,7 +1218,12 @@ void Simulation::step() {
 
 	VecXd x_new(3 * particles.size());
 	VecXd v_new(3 * particles.size());
-	VecXd f_int(3 * particles.size()), f_ext(3 * particles.size());
+	// CHI-11 subtask 4: per-vertex external/internal force buffers
+	// switch from VecXd (3*N doubles + Eigen machinery) to a flat
+	// std::vector<float> AoS. f_int is dead code in this path; both
+	// stay zero-initialized by fillForces.
+	std::vector<float> f_int(3 * particles.size(), 0.0f);
+	std::vector<float> f_ext(3 * particles.size(), 0.0f);
 	VecXd f(3 * particles.size()); // this is f in contact force calculation, but
 								   // it's different than f_int + f_ext
 	VecXd r(3 * particles.size());
@@ -1225,8 +1236,22 @@ void Simulation::step() {
 	r.setZero();
 
 	double windFactor = fillForces(f_int, f_ext, v_n, x_n, returnRecord.t);
-	s_n = x_n + sceneConfig.timeStep * v_n +
-			sceneConfig.timeStep * sceneConfig.timeStep * M_inv * f_ext;
+	// Inertial predictor s_n = x_n + h·v_n + h²·M⁻¹·f_ext. M is
+	// diagonal (per-vertex mass), so the matvec reduces to a flat
+	// per-vertex scale — no need to round-trip f_ext through Eigen.
+	{
+		const double h  = sceneConfig.timeStep;
+		const double h2 = h * h;
+		s_n = x_n + h * v_n;
+		const size_t nV = particles.size();
+		for (size_t i = 0; i < nV; ++i) {
+			const double m_inv_i = 1.0 / particles[i].mass;
+			const size_t b = i * 3;
+			s_n[Eigen::Index(b + 0)] += h2 * m_inv_i * double(f_ext[b + 0]);
+			s_n[Eigen::Index(b + 1)] += h2 * m_inv_i * double(f_ext[b + 1]);
+			s_n[Eigen::Index(b + 2)] += h2 * m_inv_i * double(f_ext[b + 2]);
+		}
+	}
 
 	returnRecord.x_prev = x_n;
 	returnRecord.v_prev = v_n;
@@ -1267,9 +1292,24 @@ void Simulation::step() {
 		// velocity: s_n_avbd = x_n + h·damp·v_n + h²·M_inv·f_ext.
 		// At damp=1.0 this is identical to s_n.
 		const double dampFactor = double(s_avbdDamp);
-		VecXd s_n_avbd = (dampFactor == 1.0) ? s_n
-		    : (x_n + sceneConfig.timeStep * dampFactor * v_n +
-		       sceneConfig.timeStep * sceneConfig.timeStep * M_inv * f_ext);
+		VecXd s_n_avbd;
+		if (dampFactor == 1.0) {
+			s_n_avbd = s_n;
+		} else {
+			// Same per-vertex M⁻¹·f_ext rewrite as above, just with
+			// damped velocity.
+			const double h  = sceneConfig.timeStep;
+			const double h2 = h * h;
+			s_n_avbd = x_n + h * dampFactor * v_n;
+			const size_t nV2 = particles.size();
+			for (size_t i = 0; i < nV2; ++i) {
+				const double m_inv_i = 1.0 / particles[i].mass;
+				const size_t b = i * 3;
+				s_n_avbd[Eigen::Index(b + 0)] += h2 * m_inv_i * double(f_ext[b + 0]);
+				s_n_avbd[Eigen::Index(b + 1)] += h2 * m_inv_i * double(f_ext[b + 1]);
+				s_n_avbd[Eigen::Index(b + 2)] += h2 * m_inv_i * double(f_ext[b + 2]);
+			}
+		}
 
 		// CHI-119: friction-as-predictor-blend, TANGENT-ONLY projection.
 		// Per AVBD's penalty formulation: friction is a per-vertex
