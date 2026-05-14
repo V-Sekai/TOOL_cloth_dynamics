@@ -108,7 +108,7 @@ public:
 		VecXd out(points.size() * 3);
 		out.setZero();
 		for (int i = 0; i < points.size(); i++) {
-			out.segment(i * 3, 3) = points[i].pos + center;
+			out.segment(i * 3, 3) = points[i].pos.toVec3d() + center;
 		}
 
 		return out;
@@ -126,7 +126,7 @@ public:
 
 		int posOffset = cumulativePos.rows();
 		for (int i = 0; i < points.size(); i++) {
-			newCumulativePos.segment(posOffset + i * 3, 3) = points[i].pos + center;
+			newCumulativePos.segment(posOffset + i * 3, 3) = points[i].pos.toVec3d() + center;
 		}
 
 		for (int i = 0; i < mesh.size(); i++) {
@@ -189,11 +189,14 @@ public:
 	}
 
 	static std::pair<bool, Vec3d> pointInsideTriangle(Triangle t, Vec3d p_prime) {
-		Vec3d AB = (t.p1()->pos - t.p0()->pos);
-		Vec3d AC = (t.p2()->pos - t.p0()->pos);
+		const Vec3d p0d = t.p0()->pos.toVec3d();
+		const Vec3d p1d = t.p1()->pos.toVec3d();
+		const Vec3d p2d = t.p2()->pos.toVec3d();
+		Vec3d AB = p1d - p0d;
+		Vec3d AC = p2d - p0d;
 		Vec3d n = AB.cross(AC);
 		double n2 = n.squaredNorm();
-		Vec3d AP = p_prime - t.p0()->pos;
+		Vec3d AP = p_prime - p0d;
 		double alpha = AB.cross(AP).dot(n) / n2;
 		double beta = AP.cross(AC).dot(n) / n2;
 		double gamma = 1 - alpha - beta;
@@ -201,7 +204,7 @@ public:
 		bool isInside = (alpha >= 0) && (beta >= 0) && (gamma >= 0) &&
 				(gamma <= 1) && (alpha <= 1) && (beta <= 1);
 
-		Vec3d proj = alpha * t.p1()->pos + beta * t.p2()->pos + gamma * t.p0()->pos;
+		Vec3d proj = alpha * p1d + beta * p2d + gamma * p0d;
 		return std::make_pair(isInside, proj);
 	}
 

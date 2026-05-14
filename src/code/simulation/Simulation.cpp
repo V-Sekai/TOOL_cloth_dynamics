@@ -224,8 +224,8 @@ void Simulation::updateCurrentPosVelocityVec() {
 	x_n.setZero();
 
 	for (const Particle &p : particles) {
-		v_n.segment(p.idx * 3, 3) = p.velocity;
-		x_n.segment(p.idx * 3, 3) = p.pos;
+		v_n.segment(p.idx * 3, 3) = p.velocity.toVec3d();
+		x_n.segment(p.idx * 3, 3) = p.pos.toVec3d();
 	}
 }
 
@@ -238,8 +238,8 @@ std::pair<VecXd, VecXd> Simulation::getCurrentPosVelocityVec() const {
 	bool encounteredNAN = false;
 	int nanCount = 0;
 	for (const Particle &p : particles) {
-		velocity.segment(p.idx * 3, 3) = p.velocity;
-		pos.segment(p.idx * 3, 3) = p.pos;
+		velocity.segment(p.idx * 3, 3) = p.velocity.toVec3d();
+		pos.segment(p.idx * 3, 3) = p.pos.toVec3d();
 		if (std::isnan(p.pos.norm())) {
 			encounteredNAN = true;
 			nanCount++;
@@ -2197,7 +2197,7 @@ void Simulation::step() {
 					VecXd v_zero = VecXd::Zero(3 * particles.size());
 					VecXd x_now(3 * particles.size());
 					for (size_t i = 0; i < particles.size(); ++i)
-						x_now.segment(3 * i, 3) = particles[i].pos;
+						x_now.segment(3 * i, 3) = particles[i].pos.toVec3d();
 					auto info = collisionDetection(x_now, v_zero,
 					                                xnew_n_primitives, v_n_primitives);
 					auto _t1 = std::chrono::steady_clock::now();
@@ -2243,7 +2243,7 @@ void Simulation::step() {
 		if (forwardRecords.size() == dumpStep) {
 			VecXd positions(3 * particles.size());
 			for (size_t i = 0; i < particles.size(); ++i)
-				positions.segment(3 * i, 3) = particles[i].pos;
+				positions.segment(3 * i, 3) = particles[i].pos.toVec3d();
 			std::vector<Vec3i> triList(mesh.size());
 			for (size_t i = 0; i < mesh.size(); ++i)
 				triList[i] = Vec3i(mesh[i].p0_idx, mesh[i].p1_idx, mesh[i].p2_idx);
@@ -4355,7 +4355,7 @@ void Simulation::loadWindSim2RealAnimationSequence(
 
 	Vec3d windFocusPoint = Vec3d(0, -1, 0);
 	for (int i = 0; i < particles.size(); i++) {
-		double distSquared = (windFocusPoint - particles[i].pos).norm();
+		double distSquared = (windFocusPoint - particles[i].pos.toVec3d()).norm();
 
 		windFallOff.segment(i * 3, 3) =
 				Vec3d::Ones() * std::min(1.0 / distSquared, 1.0);
@@ -4681,7 +4681,7 @@ double Simulation::calculateLossAndGradient(LossType &lossType,
 			Vec3d targetTranslation = lossInfo.targetTranslation;
 			VecXd x_target(3 * particles.size());
 			for (const Particle &p : particles) {
-				x_target.segment(3 * p.idx, 3) = p.pos_init + targetTranslation;
+				x_target.segment(3 * p.idx, 3) = p.pos_init.toVec3d() + targetTranslation;
 			}
 			VecXd &x_current = forwardRecords[lastIdx].x;
 			int n_particles = particles.size();

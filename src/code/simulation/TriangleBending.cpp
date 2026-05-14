@@ -228,7 +228,7 @@ TriangleBending::TriangleBending(int p0_idx, int p1_idx, int p2_idx, int p3_idx,
 	Mat3x4d pos(3, 4);
 	pos.setZero();
 	for (int i = 0; i < 4; i++)
-		pos.col(i) = pArr[idx_arr[i]].pos_rest;
+		pos.col(i) = pArr[idx_arr[i]].pos_rest.toVec3d();
 
 	double l01 = (pos.col(1) - pos.col(0)).norm();
 	double l02 = (pos.col(2) - pos.col(0)).norm();
