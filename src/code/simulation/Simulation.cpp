@@ -59,6 +59,18 @@ namespace {
     bool g_usePD    = (std::getenv("USE_PD") != nullptr);
     bool g_useAvbd  = !g_usePD;
 
+    // CHI-11 subtask 1: when AVBD will drive every step and the PD CG
+    // loop is short-circuited (default on Apple Silicon), the only
+    // per-step PD state that matters is what backward() reads. The
+    // forward-only PD kernels — Msolver factorization, M*s_n,
+    // P*x_n, the b vector — are pure waste. This gate skips them.
+    // AVBD_NO_SKIP_PD=1 re-enables the PD CG loop for shadow
+    // comparison; in that case PD must keep its full forward state.
+    bool pdForwardActive() {
+        if (g_usePD) return true;
+        return std::getenv("AVBD_NO_SKIP_PD") != nullptr;
+    }
+
     // metallib search path. Override with SLANG_METALLIB_DIR=... in env.
     std::string slangMetallibDir() {
         if (const char* env = std::getenv("SLANG_METALLIB_DIR")) return env;
@@ -145,13 +157,14 @@ double Simulation::calculateMaxTriangleDeformation(VecXd &x_new) {
 	return maxDeformation;
 }
 
-const double Simulation::fillForces(VecXd &f_int, VecXd &f_ext, const VecXd &v,
-		const VecXd &x, double t_now) {
-	// calculate forces
-	f_int.setZero();
-	// Internal forces calculation not needed for PD
-	f_ext.setZero();
-	// externalForces
+const double Simulation::fillForces(std::vector<float> &f_int,
+		std::vector<float> &f_ext, const VecXd &v, const VecXd &x, double t_now) {
+	// CHI-11 subtask 4: per-vertex AoS force buffers. f_int stays in
+	// the signature for symmetry with the old API but is unused — PD
+	// never reads internal forces from this path, it computes them
+	// through the constraint-projection matrix.
+	std::fill(f_int.begin(), f_int.end(), 0.0f);
+	std::fill(f_ext.begin(), f_ext.end(), 0.0f);
 	double windFactor = 1.0;
 
 	switch (sceneConfig.windConfig) {
@@ -176,11 +189,13 @@ const double Simulation::fillForces(VecXd &f_int, VecXd &f_ext, const VecXd &v,
 	}
 
 	if (enableConstantForcefield) {
-		f_ext += external_force_field;
+		const Eigen::Index n = external_force_field.size();
+		for (Eigen::Index i = 0; i < n; ++i) {
+			f_ext[size_t(i)] += float(external_force_field[i]);
+		}
 	}
 
-	//  double windFactor = 1.0;
-	for (int i = 0; i < particles.size(); i++) {
+	for (int i = 0; i < (int)particles.size(); i++) {
 		Particle &p = particles[i];
 		Vec3d f_i(0, 0, 0);
 		if (gravityEnabled)
@@ -195,7 +210,10 @@ const double Simulation::fillForces(VecXd &f_int, VecXd &f_ext, const VecXd &v,
 			f_i += windf_i;
 		}
 
-		f_ext.segment(p.idx * 3, 3) += f_i;
+		const size_t base = size_t(p.idx) * 3;
+		f_ext[base + 0] += float(f_i[0]);
+		f_ext[base + 1] += float(f_i[1]);
+		f_ext[base + 2] += float(f_i[2]);
 	}
 
 	return windFactor;
@@ -206,8 +224,8 @@ void Simulation::updateCurrentPosVelocityVec() {
 	x_n.setZero();
 
 	for (const Particle &p : particles) {
-		v_n.segment(p.idx * 3, 3) = p.velocity;
-		x_n.segment(p.idx * 3, 3) = p.pos;
+		v_n.segment(p.idx * 3, 3) = p.velocity.toVec3d();
+		x_n.segment(p.idx * 3, 3) = p.pos.toVec3d();
 	}
 }
 
@@ -220,8 +238,8 @@ std::pair<VecXd, VecXd> Simulation::getCurrentPosVelocityVec() const {
 	bool encounteredNAN = false;
 	int nanCount = 0;
 	for (const Particle &p : particles) {
-		velocity.segment(p.idx * 3, 3) = p.velocity;
-		pos.segment(p.idx * 3, 3) = p.pos;
+		velocity.segment(p.idx * 3, 3) = p.velocity.toVec3d();
+		pos.segment(p.idx * 3, 3) = p.pos.toVec3d();
 		if (std::isnan(p.pos.norm())) {
 			encounteredNAN = true;
 			nanCount++;
@@ -1200,7 +1218,12 @@ void Simulation::step() {
 
 	VecXd x_new(3 * particles.size());
 	VecXd v_new(3 * particles.size());
-	VecXd f_int(3 * particles.size()), f_ext(3 * particles.size());
+	// CHI-11 subtask 4: per-vertex external/internal force buffers
+	// switch from VecXd (3*N doubles + Eigen machinery) to a flat
+	// std::vector<float> AoS. f_int is dead code in this path; both
+	// stay zero-initialized by fillForces.
+	std::vector<float> f_int(3 * particles.size(), 0.0f);
+	std::vector<float> f_ext(3 * particles.size(), 0.0f);
 	VecXd f(3 * particles.size()); // this is f in contact force calculation, but
 								   // it's different than f_int + f_ext
 	VecXd r(3 * particles.size());
@@ -1213,8 +1236,22 @@ void Simulation::step() {
 	r.setZero();
 
 	double windFactor = fillForces(f_int, f_ext, v_n, x_n, returnRecord.t);
-	s_n = x_n + sceneConfig.timeStep * v_n +
-			sceneConfig.timeStep * sceneConfig.timeStep * M_inv * f_ext;
+	// Inertial predictor s_n = x_n + h·v_n + h²·M⁻¹·f_ext. M is
+	// diagonal (per-vertex mass), so the matvec reduces to a flat
+	// per-vertex scale — no need to round-trip f_ext through Eigen.
+	{
+		const double h  = sceneConfig.timeStep;
+		const double h2 = h * h;
+		s_n = x_n + h * v_n;
+		const size_t nV = particles.size();
+		for (size_t i = 0; i < nV; ++i) {
+			const double m_inv_i = 1.0 / particles[i].mass;
+			const size_t b = i * 3;
+			s_n[Eigen::Index(b + 0)] += h2 * m_inv_i * double(f_ext[b + 0]);
+			s_n[Eigen::Index(b + 1)] += h2 * m_inv_i * double(f_ext[b + 1]);
+			s_n[Eigen::Index(b + 2)] += h2 * m_inv_i * double(f_ext[b + 2]);
+		}
+	}
 
 	returnRecord.x_prev = x_n;
 	returnRecord.v_prev = v_n;
@@ -1255,9 +1292,24 @@ void Simulation::step() {
 		// velocity: s_n_avbd = x_n + h·damp·v_n + h²·M_inv·f_ext.
 		// At damp=1.0 this is identical to s_n.
 		const double dampFactor = double(s_avbdDamp);
-		VecXd s_n_avbd = (dampFactor == 1.0) ? s_n
-		    : (x_n + sceneConfig.timeStep * dampFactor * v_n +
-		       sceneConfig.timeStep * sceneConfig.timeStep * M_inv * f_ext);
+		VecXd s_n_avbd;
+		if (dampFactor == 1.0) {
+			s_n_avbd = s_n;
+		} else {
+			// Same per-vertex M⁻¹·f_ext rewrite as above, just with
+			// damped velocity.
+			const double h  = sceneConfig.timeStep;
+			const double h2 = h * h;
+			s_n_avbd = x_n + h * dampFactor * v_n;
+			const size_t nV2 = particles.size();
+			for (size_t i = 0; i < nV2; ++i) {
+				const double m_inv_i = 1.0 / particles[i].mass;
+				const size_t b = i * 3;
+				s_n_avbd[Eigen::Index(b + 0)] += h2 * m_inv_i * double(f_ext[b + 0]);
+				s_n_avbd[Eigen::Index(b + 1)] += h2 * m_inv_i * double(f_ext[b + 1]);
+				s_n_avbd[Eigen::Index(b + 2)] += h2 * m_inv_i * double(f_ext[b + 2]);
+			}
+		}
 
 		// CHI-119: friction-as-predictor-blend, TANGENT-ONLY projection.
 		// Per AVBD's penalty formulation: friction is a per-vertex
@@ -1587,46 +1639,43 @@ void Simulation::step() {
 
 	{
 		timeSteptimer.tic("PD init");
-		Eigen::VectorXd b(3 * particles.size());
-		b.setZero();
-		double newEnergy = 0;
-		curEnergy = 1000000;
-		double min_xdiff = ((s_n - x_n).norm() * (1.0 / particles.size()));
-		int min_xdiffiter = 0;
 
-		VecXd M_times_sn = M * s_n;
-		VecXd P_times_xn = sysMat[currentSysmatId].P * x_n;
-		VecXd x_new_lastconverging = x_n, v_new_lastconverging = v_n;
-
-		timeSteptimer.toc();
-		PD_TOTAL_ITER = (-std::log10(forwardConvergenceThreshold)) * 150;
-
+		// CHI-11 subtask 1: decide whether PD's CG loop will actually
+		// iterate before allocating its working set. When AVBD drives
+		// every step (default on Apple Silicon), b / M*s_n / P*x_n are
+		// pure waste — the loop runs zero iterations and AVBD_DRIVE
+		// overwrites particles[i].{pos, velocity}. AVBD_NO_SKIP_PD=1
+		// or AVBD_NO_DRIVE=1 keeps PD active for shadow comparison.
 #ifdef __APPLE__
-		// AVBD_SKIP_PD=1 + AVBD_DRIVE=1: short-circuit PD's CG loop
-		// entirely. AVBD provides the per-step positions; PD's
-		// converged x_new would just get overwritten by AVBD_DRIVE
-		// anyway, so iterating it is pure waste. Initialize
-		// x_new / v_new to the inertial predictor so post-loop code
-		// paths have sensible values, then PD_TOTAL_ITER = 0 skips
-		// the loop body. AVBD_DRIVE later overwrites
-		// particles[i].{pos, velocity} with AVBD's solve.
-		// PD's CG loop is short-circuited when AVBD drives the
-		// step. Inverted env: AVBD_NO_SKIP_PD=1 re-enables iteration
-		// (only useful for shadow comparison; the result gets thrown
-		// away by AVBD_DRIVE anyway). AVBD_NO_DRIVE=1 turns off the
-		// writeback so PD's converged x_new is kept.
-		static const bool s_avbdSkipPD =
-		    (std::getenv("AVBD_NO_SKIP_PD") == nullptr);
 		static const bool s_avbdDriveEnv =
 		    (std::getenv("AVBD_NO_DRIVE") == nullptr);
 		const bool avbdWillDrive = s_avbdDriveEnv && g_useAvbd &&
 		    currentSysmatId == 0 && sysMat[0].avbd && sysMat[0].avbd->ok();
-		if (s_avbdSkipPD && avbdWillDrive) {
+		const bool runPDLoop = pdForwardActive() || !avbdWillDrive;
+#else
+		const bool runPDLoop = true;
+#endif
+
+		Eigen::VectorXd b;
+		VecXd M_times_sn, P_times_xn;
+		double newEnergy = 0;
+		curEnergy = 1000000;
+		double min_xdiff = ((s_n - x_n).norm() * (1.0 / particles.size()));
+		int min_xdiffiter = 0;
+		VecXd x_new_lastconverging = x_n, v_new_lastconverging = v_n;
+
+		if (runPDLoop) {
+			b = Eigen::VectorXd::Zero(3 * particles.size());
+			M_times_sn = M * s_n;
+			P_times_xn = sysMat[currentSysmatId].P * x_n;
+			PD_TOTAL_ITER = (-std::log10(forwardConvergenceThreshold)) * 150;
+		} else {
 			x_new = s_n;
 			v_new = (s_n - x_n) / sceneConfig.timeStep;
 			PD_TOTAL_ITER = 0;
 		}
-#endif
+
+		timeSteptimer.toc();
 
 		for (int iterIdx = 0; iterIdx < PD_TOTAL_ITER; iterIdx++) {
 			timeSteptimer.tic("iter init");
@@ -2148,7 +2197,7 @@ void Simulation::step() {
 					VecXd v_zero = VecXd::Zero(3 * particles.size());
 					VecXd x_now(3 * particles.size());
 					for (size_t i = 0; i < particles.size(); ++i)
-						x_now.segment(3 * i, 3) = particles[i].pos;
+						x_now.segment(3 * i, 3) = particles[i].pos.toVec3d();
 					auto info = collisionDetection(x_now, v_zero,
 					                                xnew_n_primitives, v_n_primitives);
 					auto _t1 = std::chrono::steady_clock::now();
@@ -2194,7 +2243,7 @@ void Simulation::step() {
 		if (forwardRecords.size() == dumpStep) {
 			VecXd positions(3 * particles.size());
 			for (size_t i = 0; i < particles.size(); ++i)
-				positions.segment(3 * i, 3) = particles[i].pos;
+				positions.segment(3 * i, 3) = particles[i].pos.toVec3d();
 			std::vector<Vec3i> triList(mesh.size());
 			for (size_t i = 0; i < mesh.size(); ++i)
 				triList[i] = Vec3i(mesh[i].p0_idx, mesh[i].p1_idx, mesh[i].p2_idx);
@@ -3922,7 +3971,13 @@ void Simulation::updateMassMatrix() {
 		std::printf("\n");
 	}
 
-	factorizeDirectSolverLLT(M, Msolver, "Msolver pre factorization");
+	// Msolver is only consumed by PD's forward CG path. When AVBD
+	// drives the step (default on Apple Silicon), the factorization
+	// is dead state — M is diagonal so LLT(M) is trivial, but the
+	// solver object still allocates symbolic + numerical factors.
+	if (pdForwardActive()) {
+		factorizeDirectSolverLLT(M, Msolver, "Msolver pre factorization");
+	}
 }
 
 void Simulation::initializePrefactoredMatrices() {
@@ -4300,7 +4355,7 @@ void Simulation::loadWindSim2RealAnimationSequence(
 
 	Vec3d windFocusPoint = Vec3d(0, -1, 0);
 	for (int i = 0; i < particles.size(); i++) {
-		double distSquared = (windFocusPoint - particles[i].pos).norm();
+		double distSquared = (windFocusPoint - particles[i].pos.toVec3d()).norm();
 
 		windFallOff.segment(i * 3, 3) =
 				Vec3d::Ones() * std::min(1.0 / distSquared, 1.0);
@@ -4626,7 +4681,7 @@ double Simulation::calculateLossAndGradient(LossType &lossType,
 			Vec3d targetTranslation = lossInfo.targetTranslation;
 			VecXd x_target(3 * particles.size());
 			for (const Particle &p : particles) {
-				x_target.segment(3 * p.idx, 3) = p.pos_init + targetTranslation;
+				x_target.segment(3 * p.idx, 3) = p.pos_init.toVec3d() + targetTranslation;
 			}
 			VecXd &x_current = forwardRecords[lastIdx].x;
 			int n_particles = particles.size();

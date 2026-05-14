@@ -1031,7 +1031,7 @@ public:
 	void initializePrefactoredMatrices();
 
 private:
-	const double fillForces(Eigen::VectorXd &f_int, Eigen::VectorXd &f_ext,
+	const double fillForces(std::vector<float> &f_int, std::vector<float> &f_ext,
 			const Eigen::VectorXd &velocityVec,
 			const Eigen::VectorXd &posVec, double t_now);
 

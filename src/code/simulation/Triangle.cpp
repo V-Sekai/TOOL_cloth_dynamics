@@ -544,8 +544,8 @@ Triangle::Triangle(int p0_idx, int p1_idx, int p2_idx,
 	inv_deltaUV.setZero();
 
 	Mat3x2d edgeVec;
-	edgeVec.col(0) = p1()->pos_rest - p0()->pos_rest;
-	edgeVec.col(1) = p2()->pos_rest - p0()->pos_rest;
+	edgeVec.col(0) = p1()->pos_rest.toVec3d() - p0()->pos_rest.toVec3d();
+	edgeVec.col(1) = p2()->pos_rest.toVec3d() - p0()->pos_rest.toVec3d();
 	P.col(0) = edgeVec.col(0).normalized();
 	P.col(1) =
 			(edgeVec.col(1) - edgeVec.col(1).dot(P.col(0)) * P.col(0)).normalized();
