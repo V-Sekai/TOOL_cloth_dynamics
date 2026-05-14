@@ -59,6 +59,18 @@ namespace {
     bool g_usePD    = (std::getenv("USE_PD") != nullptr);
     bool g_useAvbd  = !g_usePD;
 
+    // CHI-11 subtask 1: when AVBD will drive every step and the PD CG
+    // loop is short-circuited (default on Apple Silicon), the only
+    // per-step PD state that matters is what backward() reads. The
+    // forward-only PD kernels — Msolver factorization, M*s_n,
+    // P*x_n, the b vector — are pure waste. This gate skips them.
+    // AVBD_NO_SKIP_PD=1 re-enables the PD CG loop for shadow
+    // comparison; in that case PD must keep its full forward state.
+    bool pdForwardActive() {
+        if (g_usePD) return true;
+        return std::getenv("AVBD_NO_SKIP_PD") != nullptr;
+    }
+
     // metallib search path. Override with SLANG_METALLIB_DIR=... in env.
     std::string slangMetallibDir() {
         if (const char* env = std::getenv("SLANG_METALLIB_DIR")) return env;
@@ -1587,46 +1599,43 @@ void Simulation::step() {
 
 	{
 		timeSteptimer.tic("PD init");
-		Eigen::VectorXd b(3 * particles.size());
-		b.setZero();
-		double newEnergy = 0;
-		curEnergy = 1000000;
-		double min_xdiff = ((s_n - x_n).norm() * (1.0 / particles.size()));
-		int min_xdiffiter = 0;
 
-		VecXd M_times_sn = M * s_n;
-		VecXd P_times_xn = sysMat[currentSysmatId].P * x_n;
-		VecXd x_new_lastconverging = x_n, v_new_lastconverging = v_n;
-
-		timeSteptimer.toc();
-		PD_TOTAL_ITER = (-std::log10(forwardConvergenceThreshold)) * 150;
-
+		// CHI-11 subtask 1: decide whether PD's CG loop will actually
+		// iterate before allocating its working set. When AVBD drives
+		// every step (default on Apple Silicon), b / M*s_n / P*x_n are
+		// pure waste — the loop runs zero iterations and AVBD_DRIVE
+		// overwrites particles[i].{pos, velocity}. AVBD_NO_SKIP_PD=1
+		// or AVBD_NO_DRIVE=1 keeps PD active for shadow comparison.
 #ifdef __APPLE__
-		// AVBD_SKIP_PD=1 + AVBD_DRIVE=1: short-circuit PD's CG loop
-		// entirely. AVBD provides the per-step positions; PD's
-		// converged x_new would just get overwritten by AVBD_DRIVE
-		// anyway, so iterating it is pure waste. Initialize
-		// x_new / v_new to the inertial predictor so post-loop code
-		// paths have sensible values, then PD_TOTAL_ITER = 0 skips
-		// the loop body. AVBD_DRIVE later overwrites
-		// particles[i].{pos, velocity} with AVBD's solve.
-		// PD's CG loop is short-circuited when AVBD drives the
-		// step. Inverted env: AVBD_NO_SKIP_PD=1 re-enables iteration
-		// (only useful for shadow comparison; the result gets thrown
-		// away by AVBD_DRIVE anyway). AVBD_NO_DRIVE=1 turns off the
-		// writeback so PD's converged x_new is kept.
-		static const bool s_avbdSkipPD =
-		    (std::getenv("AVBD_NO_SKIP_PD") == nullptr);
 		static const bool s_avbdDriveEnv =
 		    (std::getenv("AVBD_NO_DRIVE") == nullptr);
 		const bool avbdWillDrive = s_avbdDriveEnv && g_useAvbd &&
 		    currentSysmatId == 0 && sysMat[0].avbd && sysMat[0].avbd->ok();
-		if (s_avbdSkipPD && avbdWillDrive) {
+		const bool runPDLoop = pdForwardActive() || !avbdWillDrive;
+#else
+		const bool runPDLoop = true;
+#endif
+
+		Eigen::VectorXd b;
+		VecXd M_times_sn, P_times_xn;
+		double newEnergy = 0;
+		curEnergy = 1000000;
+		double min_xdiff = ((s_n - x_n).norm() * (1.0 / particles.size()));
+		int min_xdiffiter = 0;
+		VecXd x_new_lastconverging = x_n, v_new_lastconverging = v_n;
+
+		if (runPDLoop) {
+			b = Eigen::VectorXd::Zero(3 * particles.size());
+			M_times_sn = M * s_n;
+			P_times_xn = sysMat[currentSysmatId].P * x_n;
+			PD_TOTAL_ITER = (-std::log10(forwardConvergenceThreshold)) * 150;
+		} else {
 			x_new = s_n;
 			v_new = (s_n - x_n) / sceneConfig.timeStep;
 			PD_TOTAL_ITER = 0;
 		}
-#endif
+
+		timeSteptimer.toc();
 
 		for (int iterIdx = 0; iterIdx < PD_TOTAL_ITER; iterIdx++) {
 			timeSteptimer.tic("iter init");
@@ -3922,7 +3931,13 @@ void Simulation::updateMassMatrix() {
 		std::printf("\n");
 	}
 
-	factorizeDirectSolverLLT(M, Msolver, "Msolver pre factorization");
+	// Msolver is only consumed by PD's forward CG path. When AVBD
+	// drives the step (default on Apple Silicon), the factorization
+	// is dead state — M is diagonal so LLT(M) is trivial, but the
+	// solver object still allocates symbolic + numerical factors.
+	if (pdForwardActive()) {
+		factorizeDirectSolverLLT(M, Msolver, "Msolver pre factorization");
+	}
 }
 
 void Simulation::initializePrefactoredMatrices() {
