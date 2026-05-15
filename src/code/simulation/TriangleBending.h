@@ -39,13 +39,11 @@ public:
 	int p0_idx, p1_idx, p2_idx, p3_idx;
 	std::vector<int> idx_arr;
 	std::vector<Particle> &pArr;
-	Mat3x12d de_dxnew;
 	static double k_stiff;
-	Mat3x12d grad, A_w;
+	Eigen::Matrix<float, 3, 12> grad, A_w;
 	double constrainWeightSqrt;
-	Vec4d weightVert;
+	Eigen::Matrix<float, 4, 1> weightVert;
 	Vec12d dfi_dk_buffer;
-	Mat12x12d hessianBuffer;
 	double n, A0, A1;
 
 	TriangleBending(int p0_idx, int p1_idx, int p2_idx, int p3_idx,

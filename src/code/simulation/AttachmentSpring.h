@@ -33,7 +33,6 @@
 
 #include "../engine/Macros.h"
 #include "Constraint.h"
-#include "Eigen/Sparse"
 #include "FixedPoint.h"
 #include "Particle.h"
 

@@ -32,7 +32,6 @@
 
 #include "../engine/Macros.h"
 #include "Constraint.h"
-#include "Eigen/Sparse"
 #include "Particle.h"
 
 class Spring : public Constraint {
@@ -44,7 +43,7 @@ public:
 	static double k_stiff;
 	double k_s; // spring stiffness
 	double l0; // rest length
-	Mat3x3d dp_dx1, dp_dx2;
+	Eigen::Matrix<float, 3, 3> dp_dx1, dp_dx2;
 	Spring(int p1_idx, int p2_idx, std::vector<Particle> &pArr, double ks,
 			double L) :
 			Constraint(Constraint::ConstraintType::CONSTRAINT_SPRING_STRETCH, 3),

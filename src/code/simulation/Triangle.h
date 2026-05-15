@@ -40,7 +40,7 @@ public:
 	enum EnergyType { QUADRATIC,
 		NON_QUADRATIC };
 
-	Mat6x9d newF;
+	Eigen::Matrix<float, 6, 9> newF;
 	int p0_idx, p1_idx, p2_idx;
 	std::vector<int> idxArr;
 	std::vector<Particle> &pArr;
@@ -50,13 +50,7 @@ public:
 	static Eigen::Vector4d k;
 	static double k_stiff;
 	EnergyType energyType;
-	/* reused param for J and H*/
-	//    Mat3x2d F;
-	Mat3x2d P; // material coordinates
-	Mat2x2d I_two, rest;
-	Mat3x3d I_three;
-	Mat2x2d deltaUV, inv_deltaUV; // material space
-	Mat9x9d hessian_buffer;
+	Mat2x2d inv_deltaUV; // material space
 	double area_rest; // area, material space
 	double constrainWeightSqrt; // material space
 	Eigen::Matrix<double, 6, 9>
@@ -70,10 +64,6 @@ public:
 	double evaluateEnergy(const VecXd &x_new) override;
 
 	double evaluateEnergy(const Mat3x2d &F, const VecXd &x_new);
-
-	void hessianPrecalc(const VecXd &x_new) {
-		hessian_buffer = stretchingHessian(x_new);
-	}
 
 	Mat3x2d projectToManifold(const VecXd &x_vec) const;
 

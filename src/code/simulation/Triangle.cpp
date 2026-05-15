@@ -57,7 +57,7 @@ double Triangle::evaluateEnergy(const Mat3x2d &F, const VecXd &x_new) {
 			break;
 		default:
 		case NON_QUADRATIC:
-			Mat2x2d G1 = (F.transpose() * F - I_two) / 2.;
+			Mat2x2d G1 = (F.transpose() * F - Mat2x2d::Identity()) / 2.;
 
 			double m_energy =
 					area_rest *
@@ -97,7 +97,7 @@ Vec9d Triangle::stretchingForce(const VecXd &x_new) {
 
 		default:
 		case NON_QUADRATIC: {
-			Mat2x2d G = (F.transpose() * F - I_two) / 2.0; // Green's strain
+			Mat2x2d G = (F.transpose() * F - Mat2x2d::Identity()) / 2.0; // Green's strain
 			double e_uu = G(0, 0), e_vv = G(1, 1), e_uv = G(0, 1);
 
 			Vec3d dE_deps = Vec3d(k[0] * e_uu + k[1] * e_vv, k[1] * e_uu + k[2] * e_vv,
@@ -134,7 +134,7 @@ Vec9d Triangle::dfi_dk(const VecXd &x_new) {
 		default:
 		case NON_QUADRATIC: {
 			std::printf("WARNING NOT IMPLEMENTED\n");
-			Mat2x2d G = (F.transpose() * F - I_two) / 2.0; // Green's strain
+			Mat2x2d G = (F.transpose() * F - Mat2x2d::Identity()) / 2.0; // Green's strain
 			double e_uu = G(0, 0), e_vv = G(1, 1), e_uv = G(0, 1);
 
 			Vec3d dE_deps = Vec3d(k[0] * e_uu + k[1] * e_vv, k[1] * e_uu + k[2] * e_vv,
@@ -175,7 +175,7 @@ Mat9x9d Triangle::stretchingHessian(const VecXd &x_new) const {
 			F_vec.block<3, 1>(0, 0) = F.col(0);
 			F_vec.block<3, 1>(3, 0) = F.col(1);
 
-			Mat2x2d G = (F.transpose() * F - I_two) / 2.0; // Green's strain
+			Mat2x2d G = (F.transpose() * F - Mat2x2d::Identity()) / 2.0; // Green's strain
 
 			double e_uu = G(0, 0), e_vv = G(1, 1), e_uv = G(0, 1);
 
@@ -381,8 +381,7 @@ Mat6x9d Triangle::projectToManifoldBackward(const VecXd &x_vec) const {
 }
 
 void Triangle::projectBackwardPrecompute(const VecXd &x_vec) {
-	newF = projectToManifoldBackward(x_vec);
-	newF *= constrainWeightSqrt;
+	newF = (projectToManifoldBackward(x_vec) * constrainWeightSqrt).cast<float>();
 }
 
 void Triangle::projectBackward(const VecXd &x_vec, TripleVector &triplets) {
@@ -537,21 +536,19 @@ Triangle::Triangle(int p0_idx, int p1_idx, int p2_idx,
 		}
 	}
 
-	I_two.setIdentity();
-	I_three.setIdentity();
 	// material space data precomputation
-	deltaUV.setZero();
 	inv_deltaUV.setZero();
 
 	Mat3x2d edgeVec;
 	edgeVec.col(0) = p1()->pos_rest.toVec3d() - p0()->pos_rest.toVec3d();
 	edgeVec.col(1) = p2()->pos_rest.toVec3d() - p0()->pos_rest.toVec3d();
+	Mat3x2d P;
 	P.col(0) = edgeVec.col(0).normalized();
 	P.col(1) =
 			(edgeVec.col(1) - edgeVec.col(1).dot(P.col(0)) * P.col(0)).normalized();
 
-	deltaUV = P.transpose() * edgeVec;
-	inv_deltaUV = deltaUV.inverse(); // == rest
+	Mat2x2d deltaUV = P.transpose() * edgeVec;
+	inv_deltaUV = deltaUV.inverse();
 	area_rest = std::abs(deltaUV.determinant() * 0.5);
 	if (checkArea) {
 		if (area_rest < 0.001) {
@@ -564,7 +561,7 @@ Triangle::Triangle(int p0_idx, int p1_idx, int p2_idx,
 	Mat2x3d p;
 	p.row(0) = Vec3d(-1, 1, 0);
 	p.row(1) = Vec3d(-1, 0, 1);
-	dF_dx = kronecker<2, 3, 3, 3>(inv_deltaUV.transpose() * p, I_three);
+	dF_dx = kronecker<2, 3, 3, 3>(inv_deltaUV.transpose() * p, Mat3x3d::Identity());
 	setConstraintWeight();
 	normal = Triangle::getNormal(p0()->pos, p1()->pos, p2()->pos);
 }
@@ -582,13 +579,7 @@ Triangle &Triangle::operator=(const Triangle &other) {
 	stretchingForceBuffer = other.stretchingForceBuffer;
 	dfi_dk_buffer = other.dfi_dk_buffer;
 	energyType = other.energyType;
-	P = other.P;
-	I_two = other.I_two;
-	rest = other.rest;
-	I_three = other.I_three;
-	deltaUV = other.deltaUV;
 	inv_deltaUV = other.inv_deltaUV;
-	hessian_buffer = other.hessian_buffer;
 	area_rest = other.area_rest;
 	constrainWeightSqrt = other.constrainWeightSqrt;
 	dF_dx = other.dF_dx;
