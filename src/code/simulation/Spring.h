@@ -32,7 +32,6 @@
 
 #include "../engine/Macros.h"
 #include "Constraint.h"
-#include "Eigen/Sparse"
 #include "Particle.h"
 
 class Spring : public Constraint {

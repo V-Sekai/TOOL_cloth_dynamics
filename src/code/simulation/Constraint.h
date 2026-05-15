@@ -33,7 +33,6 @@
 
 #include "../engine/Macros.h"
 #include "../engine/UtilityFunctions.h"
-#include "Eigen/Sparse"
 #include "Particle.h"
 
 class Constraint {

@@ -34,7 +34,6 @@
 #include "../engine/Constants.h"
 #include "../engine/UtilityFunctions.h"
 #include "Triangle.h"
-#include <Eigen/src/Geometry/Transform.h>
 
 class Primitive {
 public:
