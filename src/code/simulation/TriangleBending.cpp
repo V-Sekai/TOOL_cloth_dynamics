@@ -107,9 +107,10 @@ Vec12d TriangleBending::bendingForce(const VecXd &x_new) {
 		x.segment(i * 3, 3) = x_i;
 	}
 
+	Mat3x12d A_w_d = A_w.cast<double>();
 	Vec12d gradEv2;
 	gradEv2.setZero();
-	gradEv2 = w_constraint * A_w.transpose() * (A_w * x - proj);
+	gradEv2 = w_constraint * A_w_d.transpose() * (A_w_d * x - proj);
 
 	return -gradEv2;
 }
@@ -201,7 +202,7 @@ Mat3x12d TriangleBending::backwardGradient(const VecXd &x_vec) {
 }
 
 void TriangleBending::projectBackwardPrecompute(const VecXd &x_vec) {
-	grad = backwardGradient(x_vec);
+	grad = backwardGradient(x_vec).cast<float>();
 }
 
 void TriangleBending::projectBackward(const VecXd &x_vec,
@@ -251,18 +252,13 @@ TriangleBending::TriangleBending(int p0_idx, int p1_idx, int p2_idx, int p3_idx,
 	weightVert(1) = cot12 + cot13;
 	weightVert(2) = -(cot02 + cot12);
 	weightVert(3) = -(cot03 + cot13);
-	n = (pos * weightVert).norm();
+	n = (pos * weightVert.cast<double>()).norm();
 
 	A_w.setZero();
 	for (int i = 0; i < 4; i++) {
 		for (int dim = 0; dim < 3; dim++) {
 			A_w(dim, i * 3 + dim) = weightVert[i];
 		}
-	}
-
-	de_dxnew.setZero();
-	for (int i = 0; i < 4; i++) {
-		de_dxnew.block<3, 3>(0, i * 3) = Mat3x3d::Identity() * weightVert[i];
 	}
 
 	setConstraintWeight();
