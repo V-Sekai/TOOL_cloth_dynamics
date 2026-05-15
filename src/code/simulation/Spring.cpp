@@ -123,8 +123,8 @@ void Spring::projectBackwardPrecompute(const VecXd &x_vec) {
 
 	// TODO: no stiffness, is this right?
 	Mat3x3d ddir_dposdiff = (I_three - dir * dir.transpose()) / l;
-	dp_dx1 = l0 * ddir_dposdiff * d_posdiff_dx1;
-	dp_dx2 = l0 * ddir_dposdiff * d_posdiff_dx2;
+	dp_dx1 = (l0 * ddir_dposdiff * d_posdiff_dx1).cast<float>();
+	dp_dx2 = (l0 * ddir_dposdiff * d_posdiff_dx2).cast<float>();
 }
 
 void Spring::projectBackward(const VecXd &x_vec, TripleVector &triplets) {

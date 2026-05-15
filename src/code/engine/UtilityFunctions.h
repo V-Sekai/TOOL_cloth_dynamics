@@ -50,28 +50,29 @@ static void insertIntoTriplets33(TripleVector &triplets,
 	}
 }
 
-template <int rows, int cols>
+template <int rows, int cols, typename Scalar>
 static void insertIntoTriplets(TripleVector &triplets,
-		Eigen::Matrix<double, rows, cols> &src,
+		const Eigen::Matrix<Scalar, rows, cols> &src,
 		int startRow, int startCol) {
 	for (int i = 0; i < rows; i++) {
 		for (int j = 0; j < cols; j++) {
-			if (std::abs(src(i, j)) > 1e-10) {
-				triplets.emplace_back(startRow + i, startCol + j, src(i, j));
+			double val = static_cast<double>(src(i, j));
+			if (std::abs(val) > 1e-10) {
+				triplets.emplace_back(startRow + i, startCol + j, val);
 			}
 		}
 	}
 }
 
-template <int rows, int cols>
+template <int rows, int cols, typename Scalar>
 static void insertIntoTriplets(TripleVector &triplets,
-		Eigen::Matrix<double, rows, cols> &src,
+		const Eigen::Matrix<Scalar, rows, cols> &src,
 		int blockRows, int blockCols, int srcStartRows,
 		int srcStartCols, int dstStartRow,
 		int dstStartCol) {
 	for (int i = 0; i < blockRows; i++) {
 		for (int j = 0; j < blockCols; j++) {
-			double val = src(srcStartRows + i, srcStartCols + j);
+			double val = static_cast<double>(src(srcStartRows + i, srcStartCols + j));
 			if (std::abs(val) > 1e-12) {
 				triplets.emplace_back(dstStartRow + i, dstStartCol + j, val);
 			}
