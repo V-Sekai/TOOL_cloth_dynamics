@@ -247,6 +247,26 @@ public:
     // Each accessor is safe to call after stepBackward() succeeds; the
     // corresponding constraint type must have been uploaded.
     void readPositionsGrad(std::vector<float>& out) const;
+
+    // ---- Implicit-function (IFT) adjoint ------------------------------
+    // For the converged implicit-Euler step g(x*; y, p) = 0 (penalty energy,
+    // i.e. AVBD_AL off so every dual is zero):  H z = c  with  H = dg/dx,
+    // then dL/dy = W z and dL/dp = -(dg/dp)^T z, where W = diag(m/h^2).
+    //
+    // Total energy gradient g(x) at `positions` (3*nV floats, tight) with the
+    // predicted positions / anchors already uploaded. Optionally returns the
+    // per-vertex 3x3 blocks of H (6 floats per vertex, xx xy xz yy yz zz).
+    // Overwrites the solver's position buffer.
+    int computeGradient(const float* positions, std::vector<float>& g,
+                        std::vector<float>* hBlocks);
+    // Vertex cliques of every uploaded constraint (springs: 2, membrane
+    // triangles: 3, bending stencils: 4); `sizes[i]` entries of `flat` per clique.
+    // Attachments touch one vertex and add no coupling.
+    void getConstraintCliques(std::vector<uint32_t>& flat, std::vector<uint8_t>& sizes) const;
+    // While set, stepBackward(z) treats its argument as z = H^-1 c instead of
+    // a cotangent on x_out: it feeds v_g = -z, v_H = 0 through the
+    // per-constraint backward kernels, evaluated at the current positions.
+    void setIftMode(bool on);
     // Per-vertex ∂L/∂mass — emitted by `vbd_init_backward` (PR-G Brick B,
     // CHI-14). The inertial term is the only place mass appears in the
     // forward, so this is the full density / mass gradient. Vector of

@@ -5,6 +5,10 @@
 // linked without DiffCloth.
 
 #include "AvbdBackwardShim.h"
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstdio>
 
 #include <cstdint>
 #include <vector>
