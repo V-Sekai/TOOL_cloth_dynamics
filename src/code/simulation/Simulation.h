@@ -30,6 +30,7 @@
 #ifndef OMEGAENGINE_SIMULATION_H
 #define OMEGAENGINE_SIMULATION_H
 
+#include <map>
 #include "../engine/Constants.h"
 #include "../engine/Macros.h"
 #include "../engine/MeshFileHandler.h"
@@ -38,7 +39,7 @@
 #include "AttachmentSpring.h"
 #include <memory>
 
-namespace cloth { class MetalCGSolver; class AvbdSolver; }
+namespace cloth { class MetalCGSolver; class AvbdSolver; class AvbdIft; }
 
 #include "Constraint.h"
 #include "FixedPoint.h"
@@ -479,6 +480,16 @@ public:
 
 	std::vector<Primitive *> primitives, allPrimitivesToRender;
 	std::vector<std::string> log;
+	// Per forward step (key = step index): predicted positions and anchor
+	// positions, so the implicit-function adjoint can replay that step's energy.
+	struct AvbdSelfPush { uint32_t a, b; double dhat[3]; double dist, thresh; };
+	std::map<int, std::vector<AvbdSelfPush>> avbdSelfHist;   // per step, in application order
+	void applySelfCollisionAdjoint(int stepIdx, VecXd &lam) const;
+	std::map<int, std::pair<std::vector<float>, std::vector<float>>> avbdStepHist;
+	bool lastAvbdBwdWasIft = false;
+	std::shared_ptr<cloth::AvbdIft> avbdIft;   // IFT adjoint solver (lazy)
+	Eigen::SimplicialLLT<SpMat> avbdPFactor;   // PD operator P = M + h^2 C for the IFT adjoint
+	bool avbdPFactorReady = false;
 	std::vector<ForwardInformation> forwardRecords, groundTruthForwardRecords,
 			linesearchRecords;
 	std::vector<std::pair<std::vector<ForwardInformation>,

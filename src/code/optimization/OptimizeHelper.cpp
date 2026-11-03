@@ -28,6 +28,8 @@
 // Email: liyifei@csail.mit.edu
 //
 
+#include <cstdlib>
+#include <cstdio>
 #include "OptimizeHelper.h"
 
 VecXd OptimizeHelper::getLowerBound() {
@@ -574,7 +576,13 @@ double OptimizeHelper::operator()(const VecXd &x, VecXd &grad) {
 	std::printf("timestep: %.4f / 1/%d\n", system->sceneConfig.timeStep,
 			(int)(1.0 / system->sceneConfig.timeStep));
 
-	Simulation::ParamInfo param = vecXdToParamInfo(x);
+	// Debug hook: DIFFCLOTH_PERTURB="i,eps" adds eps to parameter i, for finite differences.
+	VecXd xPert = x;
+	if (const char *pe = std::getenv("DIFFCLOTH_PERTURB")) {
+		int pi = 0; double peps = 0;
+		if (std::sscanf(pe, "%d,%lf", &pi, &peps) == 2 && pi >= 0 && pi < xPert.size()) xPert[pi] += peps;
+	}
+	Simulation::ParamInfo param = vecXdToParamInfo(xPert);
 	Logging::logColor("LBFGS param:\n" +
 					Simulation::parameterToString(taskInfo, param) + "\n",
 			Logging::LogColor::MAGENTA);
@@ -594,5 +602,19 @@ double OptimizeHelper::operator()(const VecXd &x, VecXd &grad) {
 	Simulation::backwrdInfoAndGradToString(taskInfo, backwardRecords[0]);
 	system->linesearchRecords = system->forwardRecords;
 	Logging::logOk("Loss is: " + d2str(loss, 8) + "\n");
+	// Debug hook: DIFFCLOTH_DUMP_GRAD=<file> appends loss, x and grad per
+	// evaluation; DIFFCLOTH_ONE_EVAL=1 exits after the first one. Used to
+	// compare solver/backward paths on identical parameters.
+	if (const char *dumpPath = std::getenv("DIFFCLOTH_DUMP_GRAD")) {
+		if (FILE *f = std::fopen(dumpPath, "a")) {
+			std::fprintf(f, "loss %.9g\nx %d", loss, (int)x.size());
+			for (int i = 0; i < x.size(); ++i) std::fprintf(f, " %.9g", x[i]);
+			std::fprintf(f, "\ngrad %d", (int)grad.size());
+			for (int i = 0; i < grad.size(); ++i) std::fprintf(f, " %.9g", grad[i]);
+			std::fprintf(f, "\n");
+			std::fclose(f);
+		}
+		if (std::getenv("DIFFCLOTH_ONE_EVAL")) std::exit(0);
+	}
 	return loss;
 }
