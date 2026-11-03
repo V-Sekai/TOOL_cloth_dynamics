@@ -31,7 +31,13 @@ if (APPLE)
     link_directories("/usr/local/Cellar/libomp/16.0.6/lib/")
 endif()
 
-set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+if (MSVC)
+    # Overwriting the flags with "-O3" would also drop MSVC's default /MD and
+    # fall back to the static CRT, which does not link against slang-rhi.
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /MD")
+else()
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+endif()
 set(CMAKE_CXX_STANDARD 20)
 set(EXECUTABLE_NAME tool_cloth_dynamics)
 set(EXTERNAL_ROOT ${PROJECT_SOURCE_DIR}/external)
@@ -119,10 +125,51 @@ if (APPLE)
     # DiffCloth build so `Simulation::stepBackwardAvbd` (Brick D) can
     # call it from the optimisation path.
     list(APPEND SRCFILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/AvbdBackwardShim.cpp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/AvbdBackwardShim.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/AvbdIft.cpp")
+endif()
+
+# slang-rhi AVBD backend (Vulkan / D3D12 / CUDA, and Metal through slang-rhi).
+# Replaces the Metal-only AvbdSolver.mm; build exactly one AvbdSolver. Needs a
+# slang-rhi checkout that has been configured and built in <dir>/build.
+#   cmake -DAVBD_USE_RHI=ON -DSLANG_RHI_DIR=/path/to/slang-rhi ...
+option(AVBD_USE_RHI "Build the slang-rhi AVBD backend" OFF)
+set(SLANG_RHI_DIR "" CACHE PATH "slang-rhi source dir (with a build/ subdir)")
+if (AVBD_USE_RHI)
+    if (NOT SLANG_RHI_DIR)
+        message(FATAL_ERROR "AVBD_USE_RHI needs -DSLANG_RHI_DIR=<slang-rhi checkout>")
+    endif()
+    set(SLANG_RHI_BUILD "${SLANG_RHI_DIR}/build")
+    set(SLANG_SRC "${SLANG_RHI_BUILD}/_deps/slang-src")
+    if (APPLE)
+        list(REMOVE_ITEM SRCFILES "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/AvbdSolver.mm")
+    else()
+        list(APPEND SRCFILES "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/AvbdBackwardShim.cpp"
+                             "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/AvbdIft.cpp")
+    endif()
+    list(APPEND SRCFILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/RhiContext.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver/AvbdSolverRhi.cpp")
 endif()
 
 add_executable(${EXECUTABLE_NAME} ${SRCFILES}  )
+
+if (AVBD_USE_RHI)
+    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE AVBD_USE_RHI=1)
+    target_include_directories(${EXECUTABLE_NAME} PRIVATE
+        "${SLANG_RHI_DIR}/include" "${SLANG_RHI_BUILD}/include" "${SLANG_SRC}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/code/slang_solver")
+    target_link_directories(${EXECUTABLE_NAME} PRIVATE "${SLANG_RHI_BUILD}" "${SLANG_SRC}/lib")
+    target_link_libraries(${EXECUTABLE_NAME} slang-rhi slang-rhi-resources slang-rhi-vma slang)
+    # slang runtime DLLs next to the executable
+    if (WIN32)
+        file(GLOB SLANG_RHI_DLLS "${SLANG_RHI_BUILD}/*.dll")
+        foreach(dll ${SLANG_RHI_DLLS})
+            add_custom_command(TARGET ${EXECUTABLE_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:${EXECUTABLE_NAME}>")
+        endforeach()
+    endif()
+endif()
 
 target_link_directories(${PROJECT_NAME} PRIVATE "/usr/local/Cellar/libomp/16.0.6/lib/")
 target_link_libraries(${EXECUTABLE_NAME} OpenMP::OpenMP_CXX)

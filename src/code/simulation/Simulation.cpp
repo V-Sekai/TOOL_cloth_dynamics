@@ -29,10 +29,20 @@
 
 #include "Simulation.h"
 
+#include <filesystem>
+
+#if defined(__APPLE__) || defined(AVBD_USE_RHI)
+#define AVBD_AVAILABLE 1
+#endif
+
 #ifdef __APPLE__
 #include "../slang_solver/MetalCGSolver.h"
+#endif
+
+#ifdef AVBD_AVAILABLE
 #include "../slang_solver/AvbdSolver.h"
 #include "../slang_solver/AvbdBackwardShim.h"
+#include "../slang_solver/AvbdIft.h"
 #endif
 
 namespace {
@@ -56,8 +66,32 @@ namespace {
     //   AVBD_NO_SKIP_PD=1    — also iterate PD's CG (waste)
     //   AVBD_NO_CONTACT=1    — skip primitive projection
     //   AVBD_NO_SELF_COLLISION=1 — skip cloth-cloth resolution
+    // metallib search path. Override with SLANG_METALLIB_DIR=... in env.
+    // Default is relative to the source checkout, not a user home dir.
+    std::string slangMetallibDir() {
+        if (const char* env = std::getenv("SLANG_METALLIB_DIR")) return env;
+        return std::string(SOURCE_PATH) + "/tests/slang_validate/build";
+    }
+
+    // AVBD needs its metallibs. Without them, AvbdSolver construction
+    // fails after PD's LLT prefactorization was already skipped, and the
+    // first PD solve aborts. Fall back to PD up front instead.
+    bool avbdAvailable() {
+#ifdef AVBD_AVAILABLE
+#ifdef AVBD_USE_RHI
+        // slang-rhi backend compiles the emitted .slang sources at runtime.
+        const char* probe = "vbd_init.slang";
+#else
+        const char* probe = "vbd_init.metallib";
+#endif
+        return std::filesystem::exists(std::filesystem::path(slangMetallibDir()) / probe);
+#else
+        return false;
+#endif
+    }
+
     bool g_usePD    = (std::getenv("USE_PD") != nullptr);
-    bool g_useAvbd  = !g_usePD;
+    bool g_useAvbd  = !g_usePD && avbdAvailable();
 
     // CHI-11 subtask 1: when AVBD will drive every step and the PD CG
     // loop is short-circuited (default on Apple Silicon), the only
@@ -69,13 +103,6 @@ namespace {
     bool pdForwardActive() {
         if (g_usePD) return true;
         return std::getenv("AVBD_NO_SKIP_PD") != nullptr;
-    }
-
-    // metallib search path. Override with SLANG_METALLIB_DIR=... in env.
-    std::string slangMetallibDir() {
-        if (const char* env = std::getenv("SLANG_METALLIB_DIR")) return env;
-        return "/Users/ernest.lee/Desktop/TOOL_cloth_dynamics/"
-               "tests/slang_validate/build";
     }
 
 #ifdef __APPLE__
@@ -1257,7 +1284,7 @@ void Simulation::step() {
 	returnRecord.v_prev = v_n;
 	returnRecord.s_n = s_n;
 
-#ifdef __APPLE__
+#ifdef AVBD_AVAILABLE
 	// PR-E shadow shuttle: when USE_AVBD=1 and AvbdSolver is loaded,
 	// dispatch one full AVBD outer iteration in parallel with the PD
 	// path. The result is read back into a scratch buffer for logging;
@@ -1403,6 +1430,7 @@ void Simulation::step() {
 		}
 		auto _avbd_t0 = std::chrono::steady_clock::now();
 		sysMat[0].avbd->updateState(posF.data(), predF.data());
+		std::vector<float> histFixed;
 
 		// CHI-111: re-upload attachment anchor positions every step.
 		// For demos where splines drive `fixedPointPos()` per timestep
@@ -1422,7 +1450,11 @@ void Simulation::step() {
 				xfixedNow[3 * i + 2] = float(fp[2]);
 			}
 			sysMat[0].avbd->updateAttachmentFixedPos(xfixedNow.data());
+			histFixed = xfixedNow;
 		}
+		// Per-step inputs the implicit-function adjoint needs to replay this
+		// step's energy: predicted positions y and anchor positions.
+		avbdStepHist[int(forwardRecords.size())] = { predF, histFixed };
 		// AVBD_AL=1 enables the augmented-Lagrangian dual ramp on
 		// attachments. After each outer iter's step(), dispatch
 		// stepDualAttachments() to nudge λ toward zero constraint
@@ -1646,7 +1678,7 @@ void Simulation::step() {
 		// pure waste — the loop runs zero iterations and AVBD_DRIVE
 		// overwrites particles[i].{pos, velocity}. AVBD_NO_SKIP_PD=1
 		// or AVBD_NO_DRIVE=1 keeps PD active for shadow comparison.
-#ifdef __APPLE__
+#ifdef AVBD_AVAILABLE
 		static const bool s_avbdDriveEnv =
 		    (std::getenv("AVBD_NO_DRIVE") == nullptr);
 		const bool avbdWillDrive = s_avbdDriveEnv && g_useAvbd &&
@@ -1935,7 +1967,7 @@ void Simulation::step() {
 	returnRecord.f = f;
 	returnRecord.r = r;
 
-#ifdef __APPLE__
+#ifdef AVBD_AVAILABLE
 	// Per-step PD displacement |x_new − x_n| for direct comparison
 	// with avbd-shadow's dxMax/dxMean (which measures |avbd − x_n|).
 	// If pd_dx_max and avbd_dx_max diverge much, the AVBD solve
@@ -1997,7 +2029,7 @@ void Simulation::step() {
 	if (s_benchPerStep) {
 		auto _bench_us = std::chrono::duration_cast<std::chrono::microseconds>(
 			std::chrono::steady_clock::now() - _bench_t0).count();
-#ifdef __APPLE__
+#ifdef AVBD_AVAILABLE
 		// Pick the label for what actually drove the step:
 		//   AVBD_DRIVE + AVBD_SKIP_PD → AVBD's solve, no PD CG
 		//   AVBD_DRIVE alone           → AVBD's solve after PD ran (PD output discarded)
@@ -2022,7 +2054,7 @@ void Simulation::step() {
 			static_cast<long long>(_bench_us));
 	}
 
-#ifdef __APPLE__
+#ifdef AVBD_AVAILABLE
 	// AVBD_DRIVE=1 commits AVBD's shadow output as the simulation
 	// outcome — overrides PD's converged Particle.pos and recomputes
 	// velocity from the AVBD delta. Use ONLY when you've verified
@@ -2154,6 +2186,7 @@ void Simulation::step() {
 			return e && std::string(e) == "0";
 		}();
 		if (!s_avbdNoSelf && selfcollisionEnabled) {
+			avbdSelfHist[int(forwardRecords.size())].clear();
 			size_t resolvedTotal = 0;
 			long long detectUs = 0, resolveUs = 0;
 			for (int pass = 0; pass < s_avbdSelfPasses; ++pass) {
@@ -2182,6 +2215,15 @@ void Simulation::step() {
 						const double dist = posDiff.norm();
 						const double thresh = a.radii + b.radii;
 						if (dist < thresh && dist > 1e-10) {
+							{
+								// Recorded for the adjoint: the push is
+								// a' = a + (thresh*dhat - d)/2, b' = b - same.
+								AvbdSelfPush rec;
+								rec.a = pr.first; rec.b = pr.second;
+								for (int c = 0; c < 3; ++c) rec.dhat[c] = posDiff[c] / dist;
+								rec.dist = dist; rec.thresh = thresh;
+								avbdSelfHist[int(forwardRecords.size())].push_back(rec);
+							}
 							const double overlap = thresh - dist;
 							const Vec3d push = (posDiff / dist) * (overlap * 0.5);
 							a.pos += push;
@@ -2229,7 +2271,23 @@ void Simulation::step() {
 				            detectUs, resolveUs,
 				            s_avbdCpuSelf ? "cpu" : "gpu");
 		}
-	}
+	
+		// The forward record was pushed above with PD's x_new, which is just
+		// the predictor when PD is skipped. Store the state AVBD actually
+		// produced (after contact / self-collision projection) so the loss,
+		// its gradient and the adjoint all see the true trajectory.
+		{
+			VecXd xr(3 * particles.size()), vr(3 * particles.size());
+			for (size_t i = 0; i < particles.size(); ++i) {
+				for (int k = 0; k < 3; ++k) {
+					xr[3 * i + k] = particles[i].pos[k];
+					vr[3 * i + k] = particles[i].velocity[k];
+				}
+			}
+			forwardRecords.back().x = xr;
+			forwardRecords.back().v = vr;
+		}
+}
 
 	// AVBD_DUMP_STEP=<N> writes /tmp/{avbd,pd}_drape_step_<N>.obj at
 	// step N. Naming reflects whether AVBD or PD's output drove that
@@ -2271,6 +2329,42 @@ void Simulation::step() {
 			std::printf("\n[phase-breakdown step %d]\n", s_phaseAt);
 			timeSteptimer.report();
 			std::printf("\n");
+		}
+	}
+}
+
+// Pull a cotangent on the final positions back through this step's recorded
+// self-collision pushes (applied sequentially, so in reverse order). With
+// d = a - b and f(d) = thresh*dhat - d: da'/da = I + S, da'/db = -S,
+// db'/da = -S, db'/db = I + S, S = (thresh*(I - dhat dhat^T)/|d| - I)/2.
+void Simulation::applySelfCollisionAdjoint(int stepIdx, VecXd &lam) const {
+	auto it = avbdSelfHist.find(stepIdx);
+	if (it == avbdSelfHist.end()) return;
+	const std::vector<AvbdSelfPush> &pushes = it->second;
+	for (size_t n = pushes.size(); n-- > 0;) {
+		const AvbdSelfPush &p = pushes[n];
+		Vec3d da(lam[3 * p.a + 0] - lam[3 * p.b + 0],
+				lam[3 * p.a + 1] - lam[3 * p.b + 1],
+				lam[3 * p.a + 2] - lam[3 * p.b + 2]);
+		Vec3d dh(p.dhat[0], p.dhat[1], p.dhat[2]);
+		// Frozen-direction (position-based-dynamics) Jacobian: S = -dhat dhat^T / 2.
+		// The exact term thresh*(I - dhat dhat^T)/|d| amplifies by thresh/|d| for
+		// deeply overlapping pairs and is re-applied every step, so it explodes;
+		// the frozen form is a contraction. AVBD_SELF_ADJ=exact restores it.
+		static const bool s_selfExact = []() {
+			const char *e = std::getenv("AVBD_SELF_ADJ");
+			return e && std::string(e) == "exact";
+		}();
+		Vec3d Sd;
+		if (s_selfExact) {
+			const Vec3d proj = da - dh * dh.dot(da);
+			Sd = 0.5 * (p.thresh / p.dist * proj - da);
+		} else {
+			Sd = -0.5 * dh * dh.dot(da);
+		}
+		for (int c = 0; c < 3; ++c) {
+			lam[3 * p.a + c] += Sd[c];
+			lam[3 * p.b + c] -= Sd[c];
 		}
 	}
 }
@@ -2621,6 +2715,11 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 		const ForwardInformation &forwardInfo_new) {
 	Simulation::BackwardInformation ret = backwardInfoDefault;
 	const uint32_t nV = static_cast<uint32_t>(particles.size());
+#ifndef AVBD_AVAILABLE
+	// AVBD is Metal-only; elsewhere return a zero gradient.
+	ret.dL_dx = VecXd::Zero(3 * nV);
+	return ret;
+#else
 
 	if (sysMat.empty() || !sysMat[0].avbd || !sysMat[0].avbd->ok()) {
 		// AVBD not set up — return a zero-filled BackwardInfo so the
@@ -2660,11 +2759,92 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 		}
 	}
 
+	// Implicit-function (IFT) adjoint of the converged step (default when the
+	// augmented-Lagrangian duals are off, i.e. the forward is a pure penalty
+	// energy). Solves H z = c matrix-free on the GPU instead of differentiating
+	// one non-converged sweep, which amplifies on stiff scenes.
+	// AVBD_BWD_MODE=sweep restores the old per-sweep adjoint.
+	// AVBD_BWD_MODE: "ift" (default) PD-operator IFT; "ift-fd" experimental
+	// FD-assembled Hessian (fp32 noise + indefinite at non-converged states);
+	// "sweep" the old per-sweep adjoint.
+	static const std::string s_bwdMode = []() {
+		const char *m = std::getenv("AVBD_BWD_MODE");
+		return std::string(m ? m : "ift");
+	}();
+	static const bool s_iftWanted = (s_bwdMode == "ift" || s_bwdMode == "ift-fd") &&
+			std::getenv("AVBD_AL") == nullptr;
+	static const bool s_iftPd = (s_bwdMode == "ift");
+	bool iftActive = false;
+	std::vector<double> zBuf;
+	if (s_iftWanted) {
+		auto histIt = avbdStepHist.find(forwardInfo_new.stepIdx);
+		if (histIt != avbdStepHist.end() &&
+				forwardInfo_new.x.size() == Eigen::Index(3 * nV) &&
+				histIt->second.first.size() == 3 * size_t(nV)) {
+			static const int s_iftMaxIter = []() {
+				const char *e = std::getenv("AVBD_IFT_ITERS");
+				return e ? std::max(1, std::atoi(e)) : 60;
+			}();
+			static const float s_iftTol = []() {
+				const char *e = std::getenv("AVBD_IFT_TOL");
+				return e ? float(std::atof(e)) : 1e-3f;
+			}();
+			std::vector<float> xStar(3 * size_t(nV)), cF(3 * size_t(nV)), zF;
+			for (size_t i = 0; i < xStar.size(); ++i) {
+				xStar[i] = float(forwardInfo_new.x[i]);
+				cF[i] = float(dL_dx_new[i]);
+			}
+			const std::vector<float> &fixedHist = histIt->second.second;
+			float relRes = 0.0f;
+			int its;
+			if (s_iftPd) {
+				// u = P^-1 c with P = M + h^2 C (SPD). H ~ P/h^2, so z = h^2 u
+				// and dL/dy = W z = M u. The projection Jacobian (delta P) is
+				// dropped: it is indefinite away from a converged PD state.
+				if (!avbdPFactorReady) {
+					avbdPFactor.compute(sysMat[0].P);
+					avbdPFactorReady = (avbdPFactor.info() == Eigen::Success);
+				}
+				// Load this step's converged state into the solver so the
+				// per-constraint backward kernels evaluate at x*, with the
+				// step's predicted positions and anchors.
+				sysMat[0].avbd->updateState(xStar.data(), histIt->second.first.data());
+				if (!fixedHist.empty() && nAttach > 0)
+					sysMat[0].avbd->updateAttachmentFixedPos(fixedHist.data());
+				its = -1;
+				if (avbdPFactorReady) {
+					VecXd cD = Eigen::Map<const VecXd>(dL_dx_new.data(), 3 * nV);
+					VecXd u = avbdPFactor.solve(cD);
+					const double h2 = sceneConfig.timeStep * sceneConfig.timeStep;
+					zF.resize(3 * size_t(nV));
+					for (size_t i = 0; i < zF.size(); ++i) zF[i] = float(h2 * u[i]);
+					relRes = float((sysMat[0].P * u - cD).norm() / std::max(cD.norm(), 1e-300));
+					its = 0;
+				}
+			} else {
+			if (!avbdIft) avbdIft = std::make_shared<cloth::AvbdIft>(*sysMat[0].avbd);
+			its = avbdIft->solve(
+					xStar.data(), histIt->second.first.data(),
+					fixedHist.empty() ? nullptr : fixedHist.data(), cF.data(),
+					s_iftMaxIter, s_iftTol, zF, &relRes);
+			}
+			if (its >= 0) {
+				zBuf.assign(zF.begin(), zF.end());
+				iftActive = true;
+			}
+		}
+	}
+	lastAvbdBwdWasIft = iftActive;
+	const double *shimIn = iftActive ? zBuf.data() : dL_dx_new.data();
+	sysMat[0].avbd->setIftMode(iftActive);
+
 	// Dispatch + aggregate.
 	cloth::AvbdParamGradients g;
 	const double *area_ptr = vertex_area.empty() ? nullptr : vertex_area.data();
-	if (cloth::avbdBackwardShim(*sysMat[0].avbd, nV, nAttach, nTri, nBend,
-								  dL_dx_new.data(), area_ptr, g) != 0) {
+	const int shimRc = cloth::avbdBackwardShim(*sysMat[0].avbd, nV, nAttach, nTri, nBend,
+								  shimIn, area_ptr, g);
+	sysMat[0].avbd->setIftMode(false);
+	if (shimRc != 0) {
 		Logging::logColor("[avbd-bwd] avbdBackwardShim failed\n",
 				Logging::LogColor::RED);
 		ret.dL_dx = VecXd::Zero(3 * nV);
@@ -2675,6 +2855,32 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 	ret.dL_dx = VecXd::Zero(3 * nV);
 	for (uint32_t i = 0; i < 3 * nV; ++i) {
 		ret.dL_dx[i] = g.dL_dx[i];
+	}
+	// Predictor path: y = x + h*v + h^2*a, so dL/dx += p and dL/dv = h*p,
+	// with p = dL/dy from vbd_init_backward. Without this the cross-step
+	// recurrence loses the inertial dependence (the dominant one for AVBD).
+	ret.dL_dv = VecXd::Zero(3 * nV);
+	if (g.dL_dpredicted.size() == 3 * nV) {
+		const double hStep = sceneConfig.timeStep;
+		for (uint32_t i = 0; i < 3 * nV; ++i) {
+			ret.dL_dx[i] += g.dL_dpredicted[i];
+			ret.dL_dv[i] = hStep * g.dL_dpredicted[i];
+		}
+	}
+	if (iftActive) {
+		// dL/dy = W z with W = diag(m/h^2); y = x + h v + h^2 a. The converged
+		// solution does not depend on the start iterate, so there is no
+		// separate identity / sweep term.
+		const double h2inv = 1.0 / (sceneConfig.timeStep * sceneConfig.timeStep);
+		const double hStep = sceneConfig.timeStep;
+		for (uint32_t v = 0; v < nV; ++v) {
+			const double w = particles[v].mass * h2inv;
+			for (int k = 0; k < 3; ++k) {
+				const double pk = w * zBuf[3 * v + k];
+				ret.dL_dx[3 * v + k] = pk;
+				ret.dL_dv[3 * v + k] = hStep * pk;
+			}
+		}
 	}
 	for (int t = 0; t < Constraint::CONSTRAINT_NUM && t < 4; ++t) {
 		ret.dL_dk_pertype[t] =
@@ -2721,8 +2927,11 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 		ret.dL_dmu.clear();
 		for (size_t i = 0; i < taskInfo.mu_primitives.size() &&
 							i < dr_dmu.size(); ++i) {
+			const VecXd &mu_u = iftActive
+					? static_cast<const VecXd &>(Eigen::Map<VecXd>(zBuf.data(), zBuf.size()))
+					: dL_dx_new;
 			const double dL_dmui = dr_dmu[i].transpose() *
-									sceneConfig.timeStep * dL_dx_new;
+									sceneConfig.timeStep * mu_u;
 			ret.dL_dmu.emplace_back(taskInfo.mu_primitives[i], dL_dmui);
 		}
 	}
@@ -2823,6 +3032,7 @@ Simulation::BackwardInformation Simulation::stepBackwardAvbd(
 	}
 
 	return ret;
+#endif
 }
 
 Vec3d Simulation::getInitParticlePos(int i, int j) const {
@@ -3519,6 +3729,8 @@ void Simulation::restoreToSingleRecordFromCurrentState() {
 		singleRecord.splines = sysMat[0].controlPointSplines;
 
 	forwardRecords = { singleRecord };
+	avbdStepHist.clear();
+	avbdSelfHist.clear();
 }
 
 void Simulation::loadSceneMeshes() {
@@ -4078,6 +4290,8 @@ void Simulation::initializePrefactoredMatrices() {
 			}
 		}
 
+#endif  // __APPLE__ (Metal CG)
+#ifdef AVBD_AVAILABLE
 		if (g_useAvbd && sysMatId == 0) {
 			// PR-E continued: instantiate AvbdSolver at scene init and
 			// upload mesh state (positions, masses, invH²). Constraint
@@ -5204,8 +5418,18 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 	// AVBD shim is stateless (does not take a `gradient_new`
 	// accumulator like the PD path does). Requires that the forward
 	// was driven by AVBD (`sysMat[0].avbd` set up).
-	const bool useAvbdBwd = (std::getenv("USE_AVBD_BWD") != nullptr) &&
+#ifdef AVBD_AVAILABLE
+	// Default whenever AVBD drove the forward pass: PD's backward assumes a
+	// converged PD forward and gives a meaningless gradient for AVBD states
+	// (verified: norm ~1e7). USE_PD_BWD=1 opts out; USE_AVBD_BWD=0 also opts out.
+	const char *avbdBwdEnv = std::getenv("USE_AVBD_BWD");
+	const bool avbdBwdWanted = (std::getenv("USE_PD_BWD") == nullptr) &&
+			!(avbdBwdEnv && avbdBwdEnv[0] == '0');
+	const bool useAvbdBwd = avbdBwdWanted &&
 			!sysMat.empty() && sysMat[0].avbd && sysMat[0].avbd->ok();
+#else
+	const bool useAvbdBwd = false;
+#endif
 	// CHI-111: truncated BPTT. Cap the chain to the K most-recent
 	// timesteps to bound the BPTT amplification. The AVBD per-step
 	// Jacobian has spectral radius ~√2 in some modes, so a 400-step
@@ -5216,7 +5440,11 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 	// Default K=20 covers the dominant transient on cloth meshes
 	// (~5-10 timestep response time for stiff materials at h=10ms).
 	// Set AVBD_BWD_TRUNCATE_K=0 to disable truncation (full chain).
-	int avbdBwdTruncateK = 20;
+	// Default: full chain. Verified against forward finite differences on the
+	// hat (1 AVBD iteration/step): K=400 gives cosine 0.994, K=20 only 0.975 and
+	// ~13x too small. With AVBD_ITERS>=16 the full chain is unstable; set
+	// AVBD_BWD_TRUNCATE_K=100 there.
+	int avbdBwdTruncateK = 0;
 	if (const char *e = std::getenv("AVBD_BWD_TRUNCATE_K")) {
 		avbdBwdTruncateK = std::atoi(e);
 	}
@@ -5318,7 +5546,17 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 
 			// Upstream cotangent for this step = accumulated dL/dx
 			// from later steps + any per-step loss-grad contribution.
-			VecXd dL_dx_in = derivative.dL_dx + dL_dxinit;
+			// State-space adjoint. Forward: x_t = x_{t-1} + dx(x_{t-1}, y),
+			// v_t = (x_t - x_{t-1})/h, y = x_{t-1} + h v_{t-1} + h^2 a.
+			// Total cotangent on x_t is c = lx + lv/h; the identity term
+			// (x_t = x_{t-1} + dx) and the velocity's -x_{t-1}/h term net to lx.
+			const double hStepBwd = sceneConfig.timeStep;
+			VecXd lamX = derivative.dL_dx + dL_dxinit;
+			// Position cotangent passes back through this step's self-collision
+			// pushes (velocity was taken before them, so it does not).
+			applySelfCollisionAdjoint(record.stepIdx, lamX);
+			const VecXd lamV = derivative.dL_dv + dL_dvinit;
+			VecXd dL_dx_in = lamX + lamV / hStepBwd;
 			// Gradient clipping (safety belt — even within the
 			// truncated K-step window, transient eigenmodes can spike).
 			// Matches PD's threshold (Simulation.h).
@@ -5328,10 +5566,28 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 				const double n = dL_dx_in.norm();
 				if (n > maxNorm) {
 					dL_dx_in *= maxNorm / n;
+					static bool warned = false;
+					if (!warned) {
+						warned = true;
+						std::fprintf(stderr,
+								"[avbd-bwd] WARNING: adjoint cotangent hit the clipping "
+								"ceiling (%.3g > %.3g) %d steps from the loss. The "
+								"per-step AVBD adjoint is amplifying on this scene, so "
+								"the gradient is unreliable (dress: stiffness gradient "
+								"lost). Try AVBD_BWD_TRUNCATE_K=5..20, or treat results "
+								"with care.\n",
+								n, maxNorm, avbdBwdStepsBack);
+					}
 				}
 			}
 			BackwardInformation avbdRet =
 					stepBackwardAvbd(taskConfiguration, dL_dx_in, record);
+			if (lastAvbdBwdWasIft) {
+				// IFT: x_t = x*(y_t) only, so dL/dx_{t-1} = W z - lv/h (v_t = (x_t - x_{t-1})/h).
+				avbdRet.dL_dx -= lamV / hStepBwd;
+			} else {
+				avbdRet.dL_dx += lamX;  // sweep adjoint: identity + velocity coupling
+			}
 			// Accumulate per-type stiffness, density, anchor cotangents.
 			for (int t = 0; t < Constraint::CONSTRAINT_NUM && t < 4; ++t) {
 				avbdRet.dL_dk_pertype[t] += derivative.dL_dk_pertype[t];
@@ -5372,9 +5628,7 @@ std::vector<Simulation::BackwardInformation> Simulation::runBackwardTask(
 				}
 			}
 			avbdRet.loss = derivative.loss;
-			// AVBD doesn't compute dL_dv (velocity cotangent); set to
-			// zero so downstream consumers see a defined value.
-			avbdRet.dL_dv = VecXd::Zero(3 * particles.size());
+			// dL_dv = h * dL_dpredicted, set by stepBackwardAvbd.
 			derivative = avbdRet;
 			++avbdBwdStepsBack;
 		} else {
