@@ -92,13 +92,13 @@ test: $(BINS)
 
 # Make sure the .slang files exist before we ask slangc for cpp output.
 emit-shaders:
-	@cd $(LEAN_DIR) && lake exe emit_shaders /tmp/emitted_shaders >/dev/null
+	@cd $(LEAN_DIR) && lake exe emit_shaders $(EMIT_DIR) >/dev/null
 
 # slang → cpp source.
 $(EMITTED)/%_emit.cpp: emit-shaders
 	@mkdir -p $(EMITTED)
 	$(SLANGC) -target cpp -stage compute -entry main \
-	  -o $@ /tmp/emitted_shaders/$*.slang
+	  -o $@ $(EMIT_DIR)/$*.slang
 
 # Per-test build rule. Each test_name maps to a kernel_name via the
 # TESTS list; the test source #include's its kernel's emit.
@@ -192,7 +192,7 @@ $(EMITTED)/perf_baseline_test: perf_baseline_test.cpp \
 # adds runtime dispatch + timing.
 #
 # Each rule below is target-specific:
-#   build/%.metal     comes from slangc -target metal on /tmp/emitted_shaders/%.slang
+#   build/%.metal     comes from slangc -target metal on $(EMIT_DIR)/%.slang
 #   build/%.air       comes from xcrun metal -c on build/%.metal
 #   build/%.metallib  comes from xcrun metallib on build/%.air
 #
@@ -204,7 +204,7 @@ $(EMITTED)/perf_baseline_test: perf_baseline_test.cpp \
 $(EMITTED)/%.metal: emit-shaders
 	@mkdir -p $(EMITTED)
 	$(SLANGC) -target metal -stage compute -entry main \
-	  -o $@ /tmp/emitted_shaders/$*.slang
+	  -o $@ $(EMIT_DIR)/$*.slang
 
 $(EMITTED)/%.air: $(EMITTED)/%.metal
 	xcrun -sdk macosx metal -c $< -o $@
