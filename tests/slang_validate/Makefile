@@ -21,6 +21,7 @@ SLANGC     := $(REPO_ROOT)/bin/slangc
 SLANG_DIR  := $(REPO_ROOT)/bin/.slang
 EMITTED    := $(CURDIR)/build
 LEAN_DIR   := $(REPO_ROOT)/lean
+EMIT_DIR   ?= /tmp/emitted_shaders
 
 # Metal kernels we benchmark on real GPU (Tier-3 perf). The full slang →
 # air → metallib pipeline runs once per kernel listed here.
